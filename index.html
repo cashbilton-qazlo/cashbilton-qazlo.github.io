@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cash Bilton | MTU ME Portfolio</title>
+    <title>Cash Bilton | Aerospace & Mechanical Engineering Portfolio</title>
     
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -16,18 +16,19 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     
     <style>
         body {
             font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
-            /* Pastel Gradient Animation */
-            background: linear-gradient(-45deg, #fbc2eb, #a18cd1, #ffecd2, #fcb69f);
+            background: linear-gradient(-45deg, #0f172a, #1e1b4b, #0f172a, #172554);
             background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-            color: #1f2937;
+            animation: gradientBG 20s ease infinite;
+            color: #f8fafc;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
 
         @keyframes gradientBG {
@@ -36,30 +37,25 @@
             100% { background-position: 0% 50%; }
         }
 
-        /* Glassmorphism utility classes */
+        /* Glassmorphism Panels */
         .glass-panel {
-            background: rgba(255, 255, 255, 0.4);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         }
         
         .glass-card {
-            background: rgba(255, 255, 255, 0.6);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.8);
-            box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.05);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .glass-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 12px 28px 0 rgba(0, 0, 0, 0.1);
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 30px 0 rgba(0, 0, 0, 0.4);
+            border-radius: 1.5rem;
         }
 
-        /* Custom range slider styling */
+        /* Custom Range Slider */
         input[type=range] {
             -webkit-appearance: none;
             width: 100%;
@@ -70,17 +66,27 @@
             height: 16px;
             width: 16px;
             border-radius: 50%;
-            background: #6366f1;
+            background: #38bdf8;
             cursor: pointer;
             margin-top: -6px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.25);
         }
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%;
-            height: 6px;
+            height: 4px;
             cursor: pointer;
-            background: rgba(99, 102, 241, 0.3);
-            border-radius: 3px;
+            background: rgba(56, 189, 248, 0.25);
+            border-radius: 2px;
+        }
+
+        /* Canvas cursor style */
+        .cfd-canvas {
+            cursor: crosshair;
+            touch-action: none;
         }
     </style>
 </head>
@@ -88,233 +94,937 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const ProjectileSimulation = () => {
-            const [angle, setAngle] = React.useState(45);
-            const [velocity, setVelocity] = React.useState(60);
+        const CFDSimulator = () => {
+            /* Control States */
+            const [scene, setScene] = React.useState('windTunnel'); /* 'windTunnel', 'supersonic', 'openFlow' */
+            const [visMode, setVisMode] = React.useState('dye'); /* 'dye', 'speed', 'curl', 'pressure' */
+            const [obstacleType, setObstacleType] = React.useState('airfoil'); /* 'airfoil', 'cylinder', 'flatPlate', 'nozzle', 'none' */
             
-            // Physics constants & calculations
-            const g = 9.81;
-            const rad = angle * Math.PI / 180;
-            const v0x = velocity * Math.cos(rad);
-            const v0y = velocity * Math.sin(rad);
-            
-            // Calculate time of flight and max height/distance for scaling
-            const t_total = (2 * v0y) / g;
-            const max_x = v0x * t_total;
-            const max_y = (v0y * v0y) / (2 * g);
-            
-            // Generate points for SVG path
-            let points = "";
-            for(let t=0; t<=t_total; t+=t_total/30) {
-                const x = v0x * t;
-                const y = (v0y * t) - (0.5 * g * t * t);
-                // Scaled for a 400x200 viewBox
-                const scaledX = (x / (max_x || 1)) * 360 + 20;
-                const scaledY = 180 - ((y / (max_y || 1)) * 140);
-                points += `${scaledX},${scaledY} `;
-            }
-            
-            return (
-                <div className="flex flex-col h-full w-full p-5 justify-between">
-                   <div className="flex flex-col sm:flex-row gap-4 mb-4 text-sm font-semibold text-indigo-900">
-                       <label className="flex-1 flex flex-col gap-1">
-                           Launch Angle: {angle}° 
-                           <input type="range" min="10" max="85" value={angle} onChange={e=>setAngle(Number(e.target.value))}/>
-                       </label>
-                       <label className="flex-1 flex flex-col gap-1">
-                           Initial Velocity: {velocity} m/s 
-                           <input type="range" min="10" max="100" value={velocity} onChange={e=>setVelocity(Number(e.target.value))}/>
-                       </label>
-                   </div>
-                   <div className="w-full h-full min-h-[200px] relative rounded-xl overflow-hidden bg-white/50 border border-white/60 shadow-inner">
-                       <svg className="absolute inset-0 w-full h-full" viewBox="0 0 400 200" preserveAspectRatio="none">
-                          <polyline points={points} fill="none" stroke="#6366f1" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="8 4" />
-                          {/* Ground representation */}
-                          <line x1="0" y1="180" x2="400" y2="180" stroke="#94a3b8" strokeWidth="6" />
-                          <circle cx={points.split(' ')[0]?.split(',')[0]} cy={points.split(' ')[0]?.split(',')[1]} r="6" fill="#4f46e5" />
-                          <circle cx={points.trim().split(' ').pop()?.split(',')[0]} cy={points.trim().split(' ').pop()?.split(',')[1]} r="6" fill="#ef4444" />
-                       </svg>
-                   </div>
-                   <div className="mt-3 flex justify-between text-xs text-gray-600 font-medium px-1">
-                       <span>Range: {max_x.toFixed(1)} m</span>
-                       <span>Max Height: {max_y.toFixed(1)} m</span>
-                   </div>
-                </div>
-            );
-        };
+            /* Flow & Solver Sliders */
+            const [obstacleSize, setObstacleSize] = React.useState(22);
+            const [aoa, setAoA] = React.useState(8); /* degrees */
+            const [inflowSpeed, setInflowSpeed] = React.useState(1.8);
+            const [vorticityBoost, setVorticityBoost] = React.useState(2.5);
+            const [solverIters, setSolverIters] = React.useState(24);
+            const [dyeFade, setDyeFade] = React.useState(0.992);
+            const [resolution, setResolution] = React.useState(160); /* Grid width */
 
-        const BeamSimulation = () => {
-            const [force, setForce] = React.useState(100);
-            
-            // Cantilever beam deflection equation: y = (F * x^2 * (3L - x)) / (6EI)
-            const L = 100;
-            const EI = 15000; // Arbitrary rigidity for visual scaling
-            
-            let points = "";
-            let maxDeflection = 0;
-            
-            for(let x=0; x<=L; x+=5) {
-                // Calculate y deflection (downward is positive in SVG)
-                const y = (force * x * x * (3 * L - x)) / (6 * EI);
-                if (x === L) maxDeflection = y;
+            const [isPaused, setIsPaused] = React.useState(false);
+            const [fps, setFps] = React.useState(60);
+
+            const canvasRef = React.useRef(null);
+            const simRef = React.useRef(null);
+            const animFrameRef = React.useRef(null);
+
+            React.useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+
+                const W = resolution;
+                const H = Math.floor(resolution * 0.5); /* 2:1 aspect ratio */
+                canvas.width = W;
+                canvas.height = H;
+
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(W, H);
+
+                /* Fluid State Grids */
+                const size = W * H;
+                const u = new Float32Array(size);
+                const v = new Float32Array(size);
+                const u0 = new Float32Array(size);
+                const v0 = new Float32Array(size);
+                const p = new Float32Array(size);
+                const div = new Float32Array(size);
                 
-                // Scale to fit 400x200 viewBox
-                const scaledX = (x / L) * 320 + 40; // 40 to 360
-                const scaledY = 100 + (y * 2);      // Base height at 100
-                points += `${scaledX},${scaledY} `;
-            }
-            
-            return (
-                 <div className="flex flex-col h-full w-full p-5 justify-between">
-                   <div className="flex flex-col sm:flex-row gap-4 mb-4 text-sm font-semibold text-indigo-900">
-                       <label className="flex-1 flex flex-col gap-1">
-                           Point Load Magnitude: {force} N 
-                           <input type="range" min="0" max="300" value={force} onChange={e=>setForce(Number(e.target.value))}/>
-                       </label>
-                   </div>
-                   <div className="w-full h-full min-h-[200px] relative rounded-xl overflow-hidden bg-white/50 border border-white/60 shadow-inner">
-                       <svg className="absolute inset-0 w-full h-full" viewBox="0 0 400 200" preserveAspectRatio="none">
-                          {/* Unloaded state (dashed) */}
-                          <line x1="40" y1="100" x2="360" y2="100" stroke="#cbd5e1" strokeWidth="8" strokeDasharray="8 8" strokeLinecap="round" />
-                          
-                          {/* Deflected Beam */}
-                          <polyline points={points} fill="none" stroke="#f43f5e" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-                          
-                          {/* Fixed Wall Support */}
-                          <rect x="10" y="30" width="30" height="140" fill="#475569" rx="4" />
-                          
-                          {/* Load Force Arrow */}
-                          <defs>
-                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                              <polygon points="0 0, 10 3.5, 0 7" fill="#0f172a" />
-                            </marker>
-                          </defs>
-                          <line x1="360" y1={40 + maxDeflection*2} x2="360" y2={90 + maxDeflection*2} stroke="#0f172a" strokeWidth="4" markerEnd="url(#arrowhead)" />
-                       </svg>
-                   </div>
-                   <div className="mt-3 flex justify-end text-xs text-gray-600 font-medium px-1">
-                       <span>Tip Deflection: {maxDeflection.toFixed(2)} mm</span>
-                   </div>
-                </div>
-            );
-        };
+                /* Dye RGB Grids for vibrant rainbow streamlines */
+                const dyeR = new Float32Array(size);
+                const dyeG = new Float32Array(size);
+                const dyeB = new Float32Array(size);
+                const dyeR0 = new Float32Array(size);
+                const dyeG0 = new Float32Array(size);
+                const dyeB0 = new Float32Array(size);
 
-        const SimulationCard = ({ title, description, children }) => {
+                /* Solid Boundary Obstacle Mask */
+                const obstacle = new Uint8Array(size);
+
+                /* Obstacle Center */
+                let obsX = Math.floor(W * 0.3);
+                let obsY = Math.floor(H * 0.5);
+
+                const IX = (x, y) => Math.max(0, Math.min(W - 1, x)) + Math.max(0, Math.min(H - 1, y)) * W;
+
+                /* Build Obstacle Geometry Mask */
+                const updateObstacle = () => {
+                    obstacle.fill(0);
+                    if (obstacleType === 'none') return;
+
+                    const radAngle = (-aoa * Math.PI) / 180;
+                    const cosA = Math.cos(radAngle);
+                    const sinA = Math.sin(radAngle);
+
+                    for (let y = 0; y < H; y++) {
+                        for (let x = 0; x < W; x++) {
+                            const dx = x - obsX;
+                            const dy = y - obsY;
+
+                            /* Rotate coords by Angle of Attack */
+                            const rx = dx * cosA - dy * sinA;
+                            const ry = dx * sinA + dy * cosA;
+
+                            let inside = false;
+
+                            if (obstacleType === 'cylinder') {
+                                if (dx * dx + dy * dy <= obstacleSize * obstacleSize) {
+                                    inside = true;
+                                }
+                            } 
+                            else if (obstacleType === 'flatPlate') {
+                                if (Math.abs(rx) <= obstacleSize * 1.2 && Math.abs(ry) <= 3) {
+                                    inside = true;
+                                }
+                            }
+                            else if (obstacleType === 'airfoil') {
+                                /* NACA 0012 / 2412 Airfoil Profile approximation */
+                                const chord = obstacleSize * 2.8;
+                                const xc = (rx + chord * 0.3) / chord;
+                                if (xc >= 0 && xc <= 1) {
+                                    /* Thickness distribution */
+                                    const yt = 5 * 0.12 * (
+                                        0.2969 * Math.sqrt(xc) - 
+                                        0.1260 * xc - 
+                                        0.3516 * Math.pow(xc, 2) + 
+                                        0.2843 * Math.pow(xc, 3) - 
+                                        0.1015 * Math.pow(xc, 4)
+                                    ) * chord;
+                                    if (Math.abs(ry) <= yt) inside = true;
+                                }
+                            }
+                            else if (obstacleType === 'nozzle') {
+                                /* Convergent-Divergent Nozzle Wall Obstacles */
+                                const nw = W * 0.5;
+                                if (x >= obsX - nw/2 && x <= obsX + nw/2) {
+                                    const nx = (x - (obsX - nw/2)) / nw;
+                                    let wallY;
+                                    if (nx < 0.4) {
+                                        wallY = H * 0.15 + (0.4 - nx) * H * 0.3;
+                                    } else {
+                                        wallY = H * 0.15 + (nx - 0.4) * H * 0.45;
+                                    }
+                                    if (y < wallY || y > H - wallY) inside = true;
+                                }
+                            }
+
+                            if (inside) {
+                                obstacle[IX(x, y)] = 1;
+                            }
+                        }
+                    }
+                };
+
+                updateObstacle();
+
+                /* Semi-Lagrangian Advection Step */
+                const advect = (field, field0, dt) => {
+                    for (let y = 1; y < H - 1; y++) {
+                        for (let x = 1; x < W - 1; x++) {
+                            const idx = IX(x, y);
+                            if (obstacle[idx]) {
+                                field[idx] = 0;
+                                continue;
+                            }
+
+                            let prevX = x - dt * u[idx];
+                            let prevY = y - dt * v[idx];
+
+                            prevX = Math.max(0.5, Math.min(W - 1.5, prevX));
+                            prevY = Math.max(0.5, Math.min(H - 1.5, prevY));
+
+                            const i0 = Math.floor(prevX);
+                            const i1 = i0 + 1;
+                            const j0 = Math.floor(prevY);
+                            const j1 = j0 + 1;
+
+                            const s1 = prevX - i0;
+                            const s0 = 1 - s1;
+                            const t1 = prevY - j0;
+                            const t0 = 1 - t1;
+
+                            field[idx] = s0 * (t0 * field0[IX(i0, j0)] + t1 * field0[IX(i0, j1)]) +
+                                         s1 * (t0 * field0[IX(i1, j0)] + t1 * field0[IX(i1, j1)]);
+                        }
+                    }
+                };
+
+                /* Pressure Poisson Solver (Incompressibility Projection) */
+                const project = () => {
+                    /* Compute Divergence */
+                    for (let y = 1; y < H - 1; y++) {
+                        for (let x = 1; x < W - 1; x++) {
+                            const idx = IX(x, y);
+                            if (obstacle[idx]) {
+                                div[idx] = 0;
+                                p[idx] = 0;
+                                continue;
+                            }
+                            div[idx] = -0.5 * (u[IX(x + 1, y)] - u[IX(x - 1, y)] + v[IX(x, y + 1)] - v[IX(x, y - 1)]);
+                            p[idx] = 0;
+                        }
+                    }
+
+                    /* Jacobi Iterations */
+                    for (let k = 0; k < solverIters; k++) {
+                        for (let y = 1; y < H - 1; y++) {
+                            for (let x = 1; x < W - 1; x++) {
+                                const idx = IX(x, y);
+                                if (obstacle[idx]) continue;
+
+                                p[idx] = (div[idx] + p[IX(x + 1, y)] + p[IX(x - 1, y)] + p[IX(x, y + 1)] + p[IX(x, y - 1)]) / 4;
+                            }
+                        }
+                    }
+
+                    /* Subtract Pressure Gradient */
+                    for (let y = 1; y < H - 1; y++) {
+                        for (let x = 1; x < W - 1; x++) {
+                            const idx = IX(x, y);
+                            if (obstacle[idx]) {
+                                u[idx] = 0;
+                                v[idx] = 0;
+                                continue;
+                            }
+
+                            u[idx] -= 0.5 * (p[IX(x + 1, y)] - p[IX(x - 1, y)]);
+                            v[idx] -= 0.5 * (p[IX(x, y + 1)] - p[IX(x, y - 1)]);
+                        }
+                    }
+                };
+
+                /* Vorticity Confinement (Preserves crisp shear layer swirls) */
+                const applyVorticity = () => {
+                    if (vorticityBoost <= 0) return;
+
+                    const curl = new Float32Array(size);
+                    for (let y = 1; y < H - 1; y++) {
+                        for (let x = 1; x < W - 1; x++) {
+                            const idx = IX(x, y);
+                            curl[idx] = (v[IX(x + 1, y)] - v[IX(x - 1, y)]) - (u[IX(x, y + 1)] - u[IX(x, y - 1)]);
+                        }
+                    }
+
+                    for (let y = 2; y < H - 2; y++) {
+                        for (let x = 2; x < W - 2; x++) {
+                            const idx = IX(x, y);
+                            if (obstacle[idx]) continue;
+
+                            const dw_dx = (Math.abs(curl[IX(x + 1, y)]) - Math.abs(curl[IX(x - 1, y)])) * 0.5;
+                            const dw_dy = (Math.abs(curl[IX(x, y + 1)]) - Math.abs(curl[IX(x, y - 1)])) * 0.5;
+
+                            let len = Math.sqrt(dw_dx * dw_dx + dw_dy * dw_dy) + 1e-5;
+                            const nx = dw_dx / len;
+                            const ny = dw_dy / len;
+
+                            u[idx] += nx * curl[idx] * vorticityBoost * 0.02;
+                            v[idx] += ny * curl[idx] * vorticityBoost * 0.02;
+                        }
+                    }
+                };
+
+                /* Inflow Boundaries & Multi-color Rainbow Dye Injectors */
+                const applyInflow = () => {
+                    const dt = 1.0;
+                    
+                    /* Streamline Dye Injection Lines */
+                    const numLines = 16;
+                    const lineSpacing = H / (numLines + 1);
+
+                    for (let y = 0; y < H; y++) {
+                        /* Wind Tunnel boundary or Open Flow */
+                        const isBoundaryWall = (scene === 'windTunnel') && (y === 0 || y === H - 1);
+                        
+                        for (let x = 0; x < 3; x++) {
+                            const idx = IX(x, y);
+                            if (isBoundaryWall) {
+                                u[idx] = 0;
+                                v[idx] = 0;
+                            } else {
+                                u[idx] = inflowSpeed * (scene === 'supersonic' ? 2.2 : 1.0);
+                                v[idx] = 0;
+                            }
+                        }
+
+                        /* Inject vibrant multi-color dye stripes at left inflow wall */
+                        const lineIdx = Math.floor(y / lineSpacing);
+                        const distToLine = Math.abs(y - (lineIdx * lineSpacing + lineSpacing/2));
+
+                        if (distToLine < 1.4) {
+                            /* Map Y index to rainbow spectrum */
+                            const hue = (lineIdx / numLines) * 300; /* Red to Purple */
+                            const rgb = hslToRgb(hue / 360, 0.95, 0.6);
+
+                            for (let x = 1; x < 4; x++) {
+                                const idx = IX(x, y);
+                                dyeR[idx] = rgb[0];
+                                dyeG[idx] = rgb[1];
+                                dyeB[idx] = rgb[2];
+                            }
+                        }
+                    }
+                };
+
+                /* Helper: HSL to RGB conversion */
+                function hslToRgb(h, s, l) {
+                    let r, g, b;
+                    if (s === 0) {
+                        r = g = b = l;
+                    } else {
+                        const hue2rgb = (p, q, t) => {
+                            if (t < 0) t += 1;
+                            if (t > 1) t -= 1;
+                            if (t < 1/6) return p + (q - p) * 6 * t;
+                            if (t < 1/2) return q;
+                            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                            return p;
+                        };
+                        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                        const p = 2 * l - q;
+                        r = hue2rgb(p, q, h + 1/3);
+                        g = hue2rgb(p, q, h);
+                        b = hue2rgb(p, q, h - 1/3);
+                    }
+                    return [r * 255, g * 255, b * 255];
+                }
+
+                const render = () => {
+                    const data = imgData.data;
+
+                    for (let y = 0; y < H; y++) {
+                        for (let x = 0; x < W; x++) {
+                            const idx = IX(x, y);
+                            const pix = idx * 4;
+
+                            if (obstacle[idx]) {
+                                /* Dark Metallic Obstacle Rendering */
+                                data[pix] = 15;
+                                data[pix + 1] = 23;
+                                data[pix + 2] = 42;
+                                data[pix + 3] = 255;
+                                continue;
+                            }
+
+                            if (visMode === 'dye') {
+                                /* Multi-colored Dye Streamlines */
+                                data[pix] = Math.min(255, dyeR[idx]);
+                                data[pix + 1] = Math.min(255, dyeG[idx]);
+                                data[pix + 2] = Math.min(255, dyeB[idx]);
+                                data[pix + 3] = 255;
+                            }
+                            else if (visMode === 'speed') {
+                                /* Thermal Velocity Magnitude Colormap */
+                                const spd = Math.sqrt(u[idx] * u[idx] + v[idx] * v[idx]) / (inflowSpeed * 2.2 + 0.1);
+                                const norm = Math.min(1.0, spd);
+
+                                data[pix] = Math.floor(Math.sin(norm * Math.PI) * 255);
+                                data[pix + 1] = Math.floor(Math.sin(norm * Math.PI * 0.7) * 200 + norm * 55);
+                                data[pix + 2] = Math.floor((1 - norm) * 255);
+                                data[pix + 3] = 255;
+                            }
+                            else if (visMode === 'curl') {
+                                /* Vorticity (Curl) Colormap: Red = Clockwise, Blue = Counter-clockwise */
+                                const curlVal = (v[IX(Math.min(W-1, x + 1), y)] - v[IX(Math.max(0, x - 1), y)]) - 
+                                                (u[IX(x, Math.min(H-1, y + 1))] - u[IX(x, Math.max(0, y - 1))]);
+                                const val = Math.max(-1, Math.min(1, curlVal * 1.5));
+
+                                if (val > 0) {
+                                    data[pix] = Math.floor(val * 255);
+                                    data[pix + 1] = Math.floor(val * 60);
+                                    data[pix + 2] = 40;
+                                } else {
+                                    data[pix] = 30;
+                                    data[pix + 1] = Math.floor(-val * 160);
+                                    data[pix + 2] = Math.floor(-val * 255);
+                                }
+                                data[pix + 3] = 255;
+                            }
+                            else if (visMode === 'pressure') {
+                                /* Pressure Field Colormap: Red = High Stagnation, Blue = Low Suction */
+                                const prs = p[idx] * 4.0;
+                                const normP = Math.max(-1, Math.min(1, prs));
+
+                                if (normP > 0) {
+                                    data[pix] = Math.floor(normP * 255);
+                                    data[pix + 1] = Math.floor(normP * 120);
+                                    data[pix + 2] = 20;
+                                } else {
+                                    data[pix] = 20;
+                                    data[pix + 1] = Math.floor(-normP * 180);
+                                    data[pix + 2] = Math.floor(-normP * 255);
+                                }
+                                data[pix + 3] = 255;
+                            }
+                        }
+                    }
+
+                    ctx.putImageData(imgData, 0, 0);
+
+                    /* Render Obstacle Highlight Outline */
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(0, 0, W, H);
+                };
+
+                /* Simulation Step Frame Loop */
+                let lastTime = performance.now();
+                let frameCount = 0;
+
+                const step = () => {
+                    if (!isPaused) {
+                        applyInflow();
+
+                        /* Advection */
+                        u0.set(u); v0.set(v);
+                        advect(u, u0, 1.0);
+                        advect(v, v0, 1.0);
+
+                        applyVorticity();
+                        project();
+
+                        /* Dye Advection & Fade */
+                        dyeR0.set(dyeR); dyeG0.set(dyeG); dyeB0.set(dyeB);
+                        advect(dyeR, dyeR0, 1.0);
+                        advect(dyeG, dyeG0, 1.0);
+                        advect(dyeB, dyeB0, 1.0);
+
+                        /* Dye dissipation */
+                        for (let i = 0; i < size; i++) {
+                            dyeR[i] *= dyeFade;
+                            dyeG[i] *= dyeFade;
+                            dyeB[i] *= dyeFade;
+                        }
+
+                        render();
+                    }
+
+                    /* FPS Counter */
+                    frameCount++;
+                    const now = performance.now();
+                    if (now - lastTime >= 1000) {
+                        setFps(frameCount);
+                        frameCount = 0;
+                        lastTime = now;
+                    }
+
+                    animFrameRef.current = requestAnimationFrame(step);
+                };
+
+                animFrameRef.current = requestAnimationFrame(step);
+
+                simRef.current = {
+                    reset: () => {
+                        u.fill(0); v.fill(0); p.fill(0);
+                        dyeR.fill(0); dyeG.fill(0); dyeB.fill(0);
+                    },
+                    stir: (cx, cy, radius, forceX, forceY) => {
+                        const gx = Math.floor((cx / canvas.clientWidth) * W);
+                        const gy = Math.floor((cy / canvas.clientHeight) * H);
+                        const rGrid = Math.floor(radius);
+
+                        for (let y = gy - rGrid; y <= gy + rGrid; y++) {
+                            for (let x = gx - rGrid; x <= gx + rGrid; x++) {
+                                if (x >= 0 && x < W && y >= 0 && y < H) {
+                                    const idx = IX(x, y);
+                                    u[idx] += forceX * 0.15;
+                                    v[idx] += forceY * 0.15;
+
+                                    /* Add white dye burst on touch */
+                                    dyeR[idx] = 255;
+                                    dyeG[idx] = 255;
+                                    dyeB[idx] = 255;
+                                }
+                            }
+                        }
+                    }
+                };
+
+                return () => {
+                    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+                };
+            }, [scene, visMode, obstacleType, obstacleSize, aoa, inflowSpeed, vorticityBoost, solverIters, dyeFade, resolution, isPaused]);
+
+            /* Interactive Canvas Dragting/Stirring Listener */
+            const handleCanvasPointer = (e) => {
+                if (!canvasRef.current || !simRef.current) return;
+                const rect = canvasRef.current.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (e.buttons === 1) {
+                    simRef.current.stir(x, y, 12, e.movementX, e.movementY);
+                }
+            };
+
             return (
-                <div className="glass-card rounded-3xl p-6 flex flex-col h-full">
-                    <h3 className="text-2xl font-bold text-indigo-950 mb-3">{title}</h3>
-                    <p className="text-gray-700 font-medium leading-relaxed mb-6 flex-grow">{description}</p>
-                    <div className="w-full bg-white/40 rounded-2xl overflow-hidden border border-white/50 aspect-[4/3] sm:aspect-video relative shadow-sm">
-                        {children}
+                <div className="flex flex-col lg:flex-row gap-6 w-full p-2">
+                    {/* Control Panel */}
+                    <div className="w-full lg:w-1/3 flex flex-col gap-5">
+                        <div className="bg-slate-900/80 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
+                            <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
+                                <h4 className="font-bold text-sky-400 text-lg flex items-center gap-2">
+                                    <span>🌊 Real-Time Navier-Stokes CFD</span>
+                                </h4>
+                                <span className="text-xs font-mono bg-sky-950 text-sky-300 border border-sky-800 px-2 py-0.5 rounded-full">
+                                    {fps} FPS
+                                </span>
+                            </div>
+
+                            {/* Scene Mode */}
+                            <div>
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Scene Mode</label>
+                                <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                                    {['windTunnel', 'supersonic', 'openFlow'].map(m => (
+                                        <button key={m} onClick={()=>setScene(m)}
+                                                className={`py-1.5 px-2 text-xs font-bold rounded-lg capitalize transition ${scene === m ? 'bg-sky-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                                            {m === 'windTunnel' ? 'Wind Tunnel' : m === 'supersonic' ? 'Supersonic' : 'Open Flow'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Visualization Mode */}
+                            <div>
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Visualization Contour</label>
+                                <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                                    {['dye', 'speed', 'curl', 'pressure'].map(v => (
+                                        <button key={v} onClick={()=>setVisMode(v)}
+                                                className={`py-1.5 px-1 text-xs font-bold rounded-lg capitalize transition ${visMode === v ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                                            {v}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Obstacle Type */}
+                            <div>
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Obstacle Geometry</label>
+                                <select className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-sm font-semibold text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                                        value={obstacleType} onChange={e=>setObstacleType(e.target.value)}>
+                                    <option value="airfoil">Airfoil (NACA Profile)</option>
+                                    <option value="cylinder">Circular Cylinder</option>
+                                    <option value="flatPlate">Flat Plate</option>
+                                    <option value="nozzle">Convergent-Divergent Nozzle</option>
+                                    <option value="none">None (Free Stream)</option>
+                                </select>
+                            </div>
+
+                            {/* Interactive Sliders */}
+                            <div className="space-y-3 pt-2">
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Inflow Velocity (U∞)</span>
+                                        <span className="font-mono text-sky-400">{inflowSpeed.toFixed(1)}</span>
+                                    </span>
+                                    <input type="range" min="0.5" max="4.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Angle of Attack (α)</span>
+                                        <span className="font-mono text-sky-400">{aoa}°</span>
+                                    </span>
+                                    <input type="range" min="-25" max="25" step="1" value={aoa} onChange={e=>setAoA(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Vorticity Boost (Curl)</span>
+                                        <span className="font-mono text-sky-400">{vorticityBoost.toFixed(1)}</span>
+                                    </span>
+                                    <input type="range" min="0" max="6.0" step="0.2" value={vorticityBoost} onChange={e=>setVorticityBoost(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Pressure Iterations</span>
+                                        <span className="font-mono text-sky-400">{solverIters}</span>
+                                    </span>
+                                    <input type="range" min="8" max="60" step="2" value={solverIters} onChange={e=>setSolverIters(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Grid Resolution</span>
+                                        <span className="font-mono text-sky-400">{resolution} x {Math.floor(resolution/2)}</span>
+                                    </span>
+                                    <input type="range" min="100" max="240" step="20" value={resolution} onChange={e=>setResolution(Number(e.target.value))}/>
+                                </label>
+                            </div>
+
+                            {/* Buttons */}
+                            <div className="flex gap-2 pt-2">
+                                <button onClick={()=>setIsPaused(!isPaused)} 
+                                        className={`flex-1 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition ${isPaused ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white'}`}>
+                                    {isPaused ? '▶ Resume' : '⏸ Pause'}
+                                </button>
+                                <button onClick={()=>simRef.current?.reset()} 
+                                        className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition border border-slate-700">
+                                    🔄 Clear Fluid
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Canvas Viewport */}
+                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-2 shadow-2xl relative overflow-hidden min-h-[380px]">
+                        <div className="absolute top-3 left-4 text-xs font-mono bg-slate-900/90 text-sky-300 px-3 py-1 rounded-full border border-slate-700/80 z-10 pointer-events-none">
+                            Interactive Canvas • Click & Drag to Stir Fluid
+                        </div>
+
+                        <canvas ref={canvasRef} 
+                                onPointerDown={handleCanvasPointer} 
+                                onPointerMove={handleCanvasPointer}
+                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800 shadow-inner bg-black image-rendering-pixelated" />
+
+                        <div className="w-full flex justify-between items-center px-3 py-2 text-xs text-slate-400 font-mono">
+                            <span>Visualization: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
+                            <span>Solver: <strong className="text-emerald-400">Navier-Stokes (GPU/CPU Grid)</strong></span>
+                        </div>
                     </div>
                 </div>
             );
         };
 
-        const Header = () => (
-            <header className="mb-16 text-center pt-10">
-                <h1 className="text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-900 to-fuchsia-800 tracking-tight mb-4 drop-shadow-sm">
-                    Cash Bilton
-                </h1>
-                <p className="text-xl md:text-2xl text-indigo-900/80 font-medium max-w-2xl mx-auto">
-                    Mechanical Engineering Portfolio
-                </p>
-            </header>
-        );
+        const RocketEngineSizer = () => {
+            /* States */
+            const [thrust, setThrust] = React.useState(35); /* kN */
+            const [pc, setPc] = React.useState(4.0); /* MPa (~580 psi) */
+            const [pa, setPa] = React.useState(101.3); /* kPa (Sea level) */
+            const [propellant, setPropellant] = React.useState('N2O/Ethanol');
+            const [contractionRatio, setContractionRatio] = React.useState(3.5); /* Ac / At */
 
-        const Education = () => (
-            <div className="glass-panel p-8 rounded-3xl h-full">
-                <div className="flex items-center gap-3 mb-6">
-                    <svg className="w-8 h-8 text-indigo-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14l9-5-9-5-9 5 9 5z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"></path></svg>
-                    <h2 className="text-3xl font-bold text-indigo-950">Education</h2>
-                </div>
-                <div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-1">Michigan Technological University (MTU)</h3>
-                    <p className="text-md text-fuchsia-700 font-bold mb-4">B.S. Mechanical Engineering</p>
-                    <p className="text-gray-700 leading-relaxed font-medium">
-                        Focusing on solid mechanics, thermodynamics, and dynamic systems. Actively developing interactive engineering tools to bridge the gap between theoretical math and applied physics.
-                    </p>
-                </div>
-            </div>
-        );
+            /* Propellant Database */
+            const propData = {
+                'N2O/Ethanol':   { gamma: 1.23, mw: 25.2, Tc: 3050, Lstar: 1.25, name: "N₂O / Ethanol (Nitrous Biprop)" },
+                'N2O/Isopropyl': { gamma: 1.22, mw: 26.1, Tc: 2980, Lstar: 1.20, name: "N₂O / Isopropyl Alcohol (IPA)" },
+                'LOX/RP-1':      { gamma: 1.24, mw: 22.0, Tc: 3670, Lstar: 1.15, name: "LOX / RP-1 (Kerosene)" },
+                'LOX/LH2':       { gamma: 1.26, mw: 12.0, Tc: 3500, Lstar: 0.85, name: "LOX / Liquid Hydrogen" },
+                'LOX/CH4':       { gamma: 1.20, mw: 18.0, Tc: 3600, Lstar: 0.95, name: "LOX / Methane" }
+            };
 
-        const Experience = () => (
-            <div className="glass-panel p-8 rounded-3xl h-full">
-                <div className="flex items-center gap-3 mb-6">
-                    <svg className="w-8 h-8 text-fuchsia-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-                    <h2 className="text-3xl font-bold text-indigo-950">Experience</h2>
+            const g0 = 9.80665;
+            const Ru = 8314.46;
+
+            /* Calculations */
+            const calculateEngine = () => {
+                const data = propData[propellant];
+                const y = data.gamma;
+                const R = Ru / data.mw;
+                
+                const F_N = thrust * 1000;
+                const Pc_Pa = pc * 1000000;
+                const Pa_Pa = pa * 1000;
+
+                if (Pc_Pa <= Pa_Pa) return null;
+
+                const pressureRatio = Pc_Pa / Pa_Pa;
+
+                /* Exit Mach Number (Me) */
+                const term1 = Math.pow(pressureRatio, (y - 1) / y) - 1;
+                const Me = Math.sqrt((2 / (y - 1)) * term1);
+
+                /* Expansion Ratio (epsilon = Ae / At) */
+                const term2 = (2 + (y - 1) * Math.pow(Me, 2)) / (y + 1);
+                const epsilon = (1 / Me) * Math.pow(term2, (y + 1) / (2 * (y - 1)));
+
+                /* Thrust Coefficient (Cf) */
+                const Cf = Math.sqrt(
+                    ((2 * Math.pow(y, 2)) / (y - 1)) * 
+                    Math.pow(2 / (y + 1), (y + 1) / (y - 1)) * 
+                    (1 - Math.pow(1 / pressureRatio, (y - 1) / y))
+                );
+
+                /* Characteristic Velocity (c*) */
+                const cStar = Math.sqrt(y * R * data.Tc) / 
+                              (y * Math.sqrt(Math.pow(2 / (y + 1), (y + 1) / (y - 1))));
+
+                /* Specific Impulse (Isp) */
+                const Isp = (Cf * cStar) / g0;
+
+                /* Throat & Exit Areas */
+                const At = F_N / (Pc_Pa * Cf);
+                const Ae = epsilon * At;
+                const Dt = Math.sqrt((4 * At) / Math.PI);
+                const De = Math.sqrt((4 * Ae) / Math.PI);
+
+                /* Mass Flow Rate */
+                const mDot = F_N / (Isp * g0);
+
+                /* Chamber Geometry */
+                const Ac = contractionRatio * At;
+                const Dc = Math.sqrt((4 * Ac) / Math.PI);
+                const Vc = data.Lstar * At;
+
+                const thetaConvRad = 30 * (Math.PI / 180);
+                const L_conv = ((Dc - Dt) / 2) / Math.tan(thetaConvRad);
+                const V_conv = (Math.PI / 12) * L_conv * (Math.pow(Dc, 2) + Dc * Dt + Math.pow(Dt, 2));
+                
+                const V_cyl = Math.max(Vc - V_conv, 0.15 * Vc);
+                const L_cyl = V_cyl / Ac;
+                const tau_r = (data.Lstar / cStar) * 1000; /* milliseconds */
+
+                return { 
+                    Me, epsilon, Cf, cStar, Isp, At, Ae, Dt, De, mDot, 
+                    Ac, Dc, Vc, L_cyl, L_conv, tau_r 
+                };
+            };
+
+            const results = calculateEngine();
+
+            const renderNozzleSVG = () => {
+                if (!results) return null;
+
+                const width = 640;
+                const height = 320;
+                const centerY = height / 2;
+                
+                const maxDim = Math.max(results.De, results.Dc, 0.3);
+                const scale = (height * 0.7) / maxDim;
+                
+                const r_c = (results.Dc / 2) * scale;
+                const r_t = (results.Dt / 2) * scale;
+                const r_e = (results.De / 2) * scale;
+                
+                const x_inj = 40;
+                const x_cyl_end = x_inj + Math.min(Math.max(results.L_cyl * scale * 3, 90), 180);
+                const x_throat = x_cyl_end + Math.min(Math.max(results.L_conv * scale * 3, 50), 100);
+                const x_exit = Math.min(x_throat + 220, width - 40);
+
+                const topContour = `
+                    M ${x_inj}, ${centerY - r_c}
+                    L ${x_cyl_end}, ${centerY - r_c}
+                    L ${x_throat}, ${centerY - r_t}
+                    C ${x_throat + 40}, ${centerY - r_t} ${x_exit - 80}, ${centerY - r_e} ${x_exit}, ${centerY - r_e}
+                `;
+                
+                const bottomContour = `
+                    M ${x_inj}, ${centerY + r_c}
+                    L ${x_cyl_end}, ${centerY + r_c}
+                    L ${x_throat}, ${centerY + r_t}
+                    C ${x_throat + 40}, ${centerY + r_t} ${x_exit - 80}, ${centerY + r_e} ${x_exit}, ${centerY + r_e}
+                `;
+
+                return (
+                    <svg className="w-full h-full drop-shadow-2xl" viewBox={`0 0 ${width} ${height}`}>
+                        <defs>
+                            <linearGradient id="chamberFlame" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
+                                <stop offset="50%" stopColor="#f97316" stopOpacity="0.9" />
+                                <stop offset="85%" stopColor="#eab308" stopOpacity="0.95" />
+                                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.85" />
+                            </linearGradient>
+                            <linearGradient id="plumeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.85" />
+                                <stop offset="40%" stopColor="#818cf8" stopOpacity="0.5" />
+                                <stop offset="100%" stopColor="#c084fc" stopOpacity="0.0" />
+                            </linearGradient>
+                        </defs>
+
+                        {/* Flow Flame Contour */}
+                        <path d={`${topContour} L ${x_exit},${centerY+r_e} M ${x_inj},${centerY+r_c} ${bottomContour} Z`} fill="url(#chamberFlame)" />
+                        
+                        {/* Exhaust Plume */}
+                        <path d={`M ${x_exit},${centerY-r_e} Q ${x_exit+80},${centerY} ${x_exit},${centerY+r_e} Z`} fill="url(#plumeGrad)" />
+
+                        {/* Wall Shells */}
+                        <path d={topContour} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
+                        <path d={bottomContour} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
+
+                        {/* Injector Plate Header */}
+                        <rect x={x_inj - 12} y={centerY - r_c - 10} width="12" height={r_c * 2 + 20} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" />
+                        
+                        {/* Dimension Annotations */}
+                        <text x={x_inj + 15} y={centerY - 10} className="text-xs fill-amber-300 font-mono font-bold">Dc: {(results.Dc * 100).toFixed(1)} cm</text>
+                        <text x={x_throat} y={centerY - r_t - 10} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {(results.Dt * 100).toFixed(1)} cm</text>
+                        <text x={x_exit} y={centerY - r_e - 10} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {(results.De * 100).toFixed(1)} cm</text>
+                    </svg>
+                );
+            };
+
+            return (
+                <div className="flex flex-col lg:flex-row gap-6 w-full p-2">
+                    {/* Controls */}
+                    <div className="w-full lg:w-1/3 flex flex-col gap-5">
+                        <div className="bg-slate-900/80 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
+                            <h4 className="font-bold text-amber-400 text-lg border-b border-slate-700/60 pb-2 flex items-center justify-between">
+                                <span>🚀 Liquid Rocket Engine Sizer</span>
+                            </h4>
+                            
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                Propellant Pair:
+                                <select className="bg-slate-950 border border-slate-800 rounded-xl p-2 mt-1 font-mono text-sm text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500" 
+                                        value={propellant} onChange={e=>setPropellant(e.target.value)}>
+                                    <option value="N2O/Ethanol">N₂O / Ethanol (Nitrous Biprop)</option>
+                                    <option value="N2O/Isopropyl">N₂O / Isopropyl Alcohol (IPA)</option>
+                                    <option value="LOX/RP-1">LOX / RP-1 (Kerosene)</option>
+                                    <option value="LOX/LH2">LOX / LH2 (Hydrolox)</option>
+                                    <option value="LOX/CH4">LOX / LCH4 (Methalox)</option>
+                                </select>
+                            </label>
+
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                Target Thrust: {thrust} kN
+                                <input type="range" min="2" max="500" step="1" value={thrust} onChange={e=>setThrust(Number(e.target.value))}/>
+                            </label>
+
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                Chamber Pressure (Pc): {pc.toFixed(1)} MPa
+                                <input type="range" min="1" max="15" step="0.1" value={pc} onChange={e=>setPc(Number(e.target.value))}/>
+                            </label>
+
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                Contraction Ratio (Ac / At): {contractionRatio.toFixed(1)}
+                                <input type="range" min="1.8" max="7.0" step="0.1" value={contractionRatio} onChange={e=>setContractionRatio(Number(e.target.value))}/>
+                            </label>
+
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                Ambient Pressure (Pa): {pa} kPa
+                                <input type="range" min="0.1" max="101.3" step="0.5" value={pa} onChange={e=>setPa(Number(e.target.value))}/>
+                                <span className="text-[10px] text-slate-400 font-normal">101.3 = Sea Level | 0.1 ≈ Vacuum</span>
+                            </label>
+                        </div>
+
+                        {/* Performance Metric Output */}
+                        <div className="bg-slate-900/90 text-white p-5 rounded-2xl border border-slate-700 shadow-xl flex-grow">
+                            <h4 className="font-bold text-amber-300 border-b border-slate-700/80 pb-2 mb-3 text-sm">Combustion Results</h4>
+                            {!results ? (
+                                <p className="text-rose-400 text-xs">Pc must exceed ambient pressure for valid flow.</p>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                                    <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                        <p className="text-slate-400 text-[10px]">Specific Impulse (Isp)</p>
+                                        <p className="text-base font-bold text-amber-400">{results.Isp.toFixed(1)} s</p>
+                                    </div>
+                                    <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                        <p className="text-slate-400 text-[10px]">Mass Flow Rate (ṁ)</p>
+                                        <p className="text-base font-bold text-sky-400">{results.mDot.toFixed(2)} kg/s</p>
+                                    </div>
+                                    <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                        <p className="text-slate-400 text-[10px]">Chamber Dia (Dc)</p>
+                                        <p className="text-base font-bold text-emerald-400">{(results.Dc * 100).toFixed(2)} cm</p>
+                                    </div>
+                                    <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                        <p className="text-slate-400 text-[10px]">Residence Time (τ)</p>
+                                        <p className="text-base font-bold text-indigo-300">{results.tau_r.toFixed(2)} ms</p>
+                                    </div>
+                                    <div className="col-span-2 pt-1 border-t border-slate-800 flex justify-between text-[11px] text-slate-300">
+                                        <span>Exit Mach: <strong className="text-sky-300">M {results.Me.toFixed(2)}</strong></span>
+                                        <span>Expansion Ratio: <strong className="text-amber-300">ε = {results.epsilon.toFixed(1)}</strong></span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Geometry Schematic Display */}
+                    <div className="w-full lg:w-2/3 min-h-[340px] bg-slate-950 rounded-2xl border-2 border-slate-800 flex flex-col items-center justify-center p-4 shadow-2xl relative overflow-hidden">
+                        <div className="absolute top-4 left-4 text-xs font-mono bg-slate-900/90 text-amber-300 px-3 py-1 rounded-full border border-slate-700">
+                            Geometry Schematic • {propData[propellant].name}
+                        </div>
+                        {renderNozzleSVG()}
+                    </div>
                 </div>
-                <div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-1">Math Learning Center Coach</h3>
-                    <p className="text-md text-fuchsia-700 font-bold mb-4">Sophomore Year (Fall 2024) - Present</p>
-                    <ul className="text-gray-700 leading-relaxed font-medium list-disc pl-5 space-y-2">
-                        <li>Guide university students through complex mathematical concepts essential for engineering disciplines.</li>
-                        <li>Demonstrate problem-solving techniques for calculus, differential equations, and linear algebra.</li>
-                        <li>Foster a supportive and highly collaborative learning environment to improve student retention and performance.</li>
-                    </ul>
+            );
+        };
+
+        const SimulationCard = ({ title, description, children }) => (
+            <div className="glass-card p-6 md:p-8 flex flex-col mb-12 w-full">
+                <div className="max-w-4xl mb-6">
+                    <h3 className="text-2xl md:text-3xl font-extrabold text-white mb-2 tracking-tight">{title}</h3>
+                    <p className="text-slate-300 text-base leading-relaxed font-medium">{description}</p>
+                </div>
+                <div className="w-full">
+                    {children}
                 </div>
             </div>
         );
 
         const App = () => {
             return (
-                <div className="min-h-screen py-8 px-4 sm:px-8 lg:px-16 overflow-x-hidden">
-                    <div className="max-w-6xl mx-auto space-y-16">
-                        
-                        <Header />
+                <div className="py-12 px-4 sm:px-8 lg:px-16 w-full max-w-[1600px] mx-auto">
+                    
+                    {/* Header */}
+                    <header className="mb-16 text-center pt-6">
+                        <div className="inline-block px-5 py-2 glass-panel rounded-full text-sky-300 font-bold text-xs mb-4 uppercase tracking-widest border border-sky-500/30">
+                            Graduating Spring 2027
+                        </div>
+                        <h1 className="text-5xl md:text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-indigo-300 to-purple-400 tracking-tight mb-3 drop-shadow-lg">
+                            Cash Bilton
+                        </h1>
+                        <p className="text-2xl text-slate-200 font-semibold mx-auto mt-1">
+                            Mechanical Engineering Portfolio
+                        </p>
+                        <p className="text-lg text-sky-400 font-medium mx-auto mt-1">
+                            Minors in Aerospace & AERE • Michigan Technological University
+                        </p>
+                    </header>
 
-                        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
-                            <Education />
-                            <Experience />
-                        </section>
+                    {/* Academic Focus & Experience Grid */}
+                    <section className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16 max-w-5xl mx-auto">
+                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300 border border-slate-700">
+                            <h2 className="text-2xl font-bold text-sky-300 mb-4 flex items-center gap-2">
+                                <span className="text-3xl">🚀</span> Academic Focus
+                            </h2>
+                            <p className="text-slate-300 leading-relaxed font-medium text-base">
+                                Passionate about <strong>Fluid Dynamics, Computational Aerodynamics, and Rocket Propulsion systems.</strong> 
+                                Building interactive mathematical models and GPU/CPU fluid solvers to simulate complex engineering physics in real time.
+                            </p>
+                        </div>
 
-                        <section className="space-y-10">
-                            <div className="text-center">
-                                <h2 className="text-4xl font-extrabold text-indigo-950 mb-4">Interactive Mechanics</h2>
-                                <p className="text-lg text-gray-800 font-medium max-w-3xl mx-auto">
-                                    Exploring fundamental concepts in mechanical engineering through interactive React-based simulations. Adjust the parameters below to see physics in action.
-                                </p>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                                <SimulationCard
-                                    title="Kinematics: Projectile Motion"
-                                    description="Analyze the 2D trajectory of a point mass under the influence of uniform gravity. Modify launch angle and initial velocity to observe changes in maximum height and range."
-                                >
-                                    <ProjectileSimulation />
-                                </SimulationCard>
+                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300 border border-slate-700">
+                            <h2 className="text-2xl font-bold text-indigo-300 mb-2 flex items-center gap-2">
+                                <span className="text-3xl">🧮</span> Math Learning Center Coach
+                            </h2>
+                            <h3 className="text-sm text-sky-400 font-bold mb-3">MTU (Sophomore Year – Present)</h3>
+                            <ul className="text-slate-300 font-medium space-y-2 list-disc pl-5 text-sm">
+                                <li>Tutor engineering peers in Calculus, Differential Equations, and Linear Algebra.</li>
+                                <li>Translate abstract mathematical theorems into concrete, solveable engineering paradigms.</li>
+                                <li>Cultivate collaborative problem-solving methodologies to improve cohort retention.</li>
+                            </ul>
+                        </div>
+                    </section>
 
-                                <SimulationCard
-                                    title="Solid Mechanics: Cantilever Beam"
-                                    description="Visualize the elastic curve of a fixed-free cantilever beam subjected to a concentrated point load at its free end. Observe how load magnitude directly impacts tip deflection."
-                                >
-                                    <BeamSimulation />
-                                </SimulationCard>
+                    {/* Interactive Engineering Mechanics Section */}
+                    <section className="w-full flex flex-col items-center">
+                        <div className="text-center max-w-3xl mb-12">
+                            <h2 className="text-4xl font-extrabold text-white mb-3">Interactive Fluids & Propulsion Physics</h2>
+                            <p className="text-lg text-slate-300 font-medium">
+                                Real-time numerical solvers and CFD simulation tools built natively in React.
+                            </p>
+                        </div>
 
-                                {/* =======================================================================
-                                    TEMPLATE FOR ADDING FUTURE SIMULATIONS SEAMLESSLY
-                                    =======================================================================
-                                    To add a 3rd or 4th simulation, just uncomment the block below, 
-                                    update the title/description, and replace <YourNewSimulationComponent /> 
-                                    with your new React component!
+                        {/* Brower-Tech Replicated CFD Simulator */}
+                        <SimulationCard
+                            title="Interactive CFD Fluid Simulator (Navier-Stokes Grid Solver)"
+                            description="Replicated from real-time GPU/CPU fluid visualizers. Solves 2D incompressible Navier-Stokes equations with multi-colored dye injection, vorticity confinement, and pressure projection around custom obstacles."
+                        >
+                            <CFDSimulator />
+                        </SimulationCard>
 
-                                <SimulationCard
-                                    title="Thermodynamics: Gas Expansion"
-                                    description="A new interactive visualization demonstrating the ideal gas law and piston displacement during an isothermal process."
-                                >
-                                    <YourNewSimulationComponent />
-                                </SimulationCard>
-                                ======================================================================= */}
-                            </div>
-                        </section>
+                        {/* Rocket Engine Simulation */}
+                        <SimulationCard
+                            title="Propulsion: Liquid Rocket Combustion Chamber & Nozzle Sizer"
+                            description="Sizes combustion chambers and nozzles for Nitrous Oxide (N₂O), LOX, Ethanol, and Isopropyl Alcohol rocket engines based on target thrust and pressure states."
+                        >
+                            <RocketEngineSizer />
+                        </SimulationCard>
+                    </section>
 
-                        <footer className="pt-16 pb-8 text-center text-gray-700 font-medium flex flex-col items-center justify-center space-y-2">
-                            <div className="w-16 h-1 bg-gradient-to-r from-fuchsia-400 to-indigo-500 rounded-full mb-4"></div>
-                            <p>© {new Date().getFullYear()} Cash Bilton. All rights reserved.</p>
-                            <p className="text-sm text-gray-500">Built with React & Tailwind CSS.</p>
-                        </footer>
-                        
-                    </div>
+                    {/* Footer */}
+                    <footer className="pt-16 pb-10 text-center text-slate-400 font-medium flex flex-col items-center justify-center space-y-2">
+                        <div className="w-24 h-1 bg-gradient-to-r from-sky-400 to-indigo-500 rounded-full mb-6"></div>
+                        <p className="text-lg font-bold text-white">Cash Bilton</p>
+                        <p>© {new Date().getFullYear()} All rights reserved.</p>
+                        <p className="text-sm text-slate-500">Built with React & Tailwind CSS.</p>
+                    </footer>
                 </div>
             );
         };

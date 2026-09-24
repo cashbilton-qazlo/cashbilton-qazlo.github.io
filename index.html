@@ -23,9 +23,9 @@
             font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
-            background: linear-gradient(-45deg, #090d16, #0f172a, #1e1b4b, #090d16);
+            background: linear-gradient(-45deg, #070a12, #0f172a, #13122c, #070a12);
             background-size: 400% 400%;
-            animation: gradientBG 20s ease infinite;
+            animation: gradientBG 22s ease infinite;
             color: #f8fafc;
             min-height: 100vh;
             overflow-x: hidden;
@@ -39,19 +39,19 @@
 
         /* Glassmorphism Panels */
         .glass-panel {
-            background: rgba(15, 23, 42, 0.8);
+            background: rgba(15, 23, 42, 0.85);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.45);
         }
         
         .glass-card {
-            background: rgba(15, 23, 42, 0.75);
+            background: rgba(15, 23, 42, 0.80);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            box-shadow: 0 10px 30px 0 rgba(0, 0, 0, 0.5);
+            box-shadow: 0 14px 40px 0 rgba(0, 0, 0, 0.55);
             border-radius: 1.5rem;
         }
 
@@ -69,11 +69,11 @@
             background: #38bdf8;
             cursor: pointer;
             margin-top: -6px;
-            box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.9);
             transition: transform 0.1s;
         }
         input[type=range]::-webkit-slider-thumb:hover {
-            transform: scale(1.25);
+            transform: scale(1.3);
         }
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%;
@@ -96,17 +96,16 @@
         const CFDSimulator = () => {
             /* Control States */
             const [scene, setScene] = React.useState('windTunnel'); /* 'windTunnel', 'supersonic', 'openFlow' */
-            const [visMode, setVisMode] = React.useState('dye'); /* 'dye', 'speed', 'curl', 'pressure' */
-            const [obstacleType, setObstacleType] = React.useState('airfoil'); /* 'airfoil', 'cylinder', 'flatPlate', 'nozzle', 'none' */
+            const [visMode, setVisMode] = React.useState('particles'); /* 'particles', 'schlieren', 'speed', 'vorticity', 'pressure' */
+            const [obstacleType, setObstacleType] = React.useState('airfoil'); /* 'airfoil', 'cylinder', 'flatPlate', 'nozzle', 'shuttle' */
             
             /* Flow & Solver Sliders */
-            const [obstacleSize, setObstacleSize] = React.useState(22);
-            const [aoa, setAoA] = React.useState(8); /* degrees */
-            const [inflowSpeed, setInflowSpeed] = React.useState(1.8);
-            const [vorticityBoost, setVorticityBoost] = React.useState(2.5);
-            const [solverIters, setSolverIters] = React.useState(24);
-            const [dyeFade, setDyeFade] = React.useState(0.992);
-            const [resolution, setResolution] = React.useState(180); /* Grid width */
+            const [obstacleSize, setObstacleSize] = React.useState(26);
+            const [aoa, setAoA] = React.useState(10); /* degrees */
+            const [inflowSpeed, setInflowSpeed] = React.useState(2.2);
+            const [vorticityBoost, setVorticityBoost] = React.useState(3.0);
+            const [particleCount, setParticleCount] = React.useState(3500);
+            const [solverIters, setSolverIters] = React.useState(28);
 
             const [isPaused, setIsPaused] = React.useState(false);
             const [fps, setFps] = React.useState(60);
@@ -116,51 +115,58 @@
             const animFrameRef = React.useRef(null);
 
             React.useEffect(() => {
-                const displayCanvas = displayCanvasRef.current;
-                if (!displayCanvas) return;
+                const canvas = displayCanvasRef.current;
+                if (!canvas) return;
 
-                const W = resolution;
-                const H = Math.floor(resolution * 0.5); /* 2:1 aspect ratio grid */
+                /* High DPI Canvas Setup */
+                const rect = canvas.getBoundingClientRect();
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                const displayW = Math.floor(rect.width || 900);
+                const displayH = Math.floor(displayW * 0.5);
 
-                /* Create smooth offscreen grid computation canvas */
-                const offCanvas = document.createElement('canvas');
-                offCanvas.width = W;
-                offCanvas.height = H;
-                const offCtx = offCanvas.getContext('2d');
-                const imgData = offCtx.createImageData(W, H);
+                canvas.width = displayW * dpr;
+                canvas.height = displayH * dpr;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
 
-                /* Set up high-res presentation canvas dimensions */
-                const displayCtx = displayCanvas.getContext('2d');
-                displayCanvas.width = 960;
-                displayCanvas.height = 480;
+                /* Simulation Grid Dimensions (high precision calculation mesh) */
+                const GW = 160;
+                const GH = 80;
+                const gridTotal = GW * GH;
 
-                /* Fluid State Grids */
-                const size = W * H;
-                const u = new Float32Array(size);
-                const v = new Float32Array(size);
-                const u0 = new Float32Array(size);
-                const v0 = new Float32Array(size);
-                const p = new Float32Array(size);
-                const div = new Float32Array(size);
-                
-                /* Dye RGB Grids for vibrant streamlines */
-                const dyeR = new Float32Array(size);
-                const dyeG = new Float32Array(size);
-                const dyeB = new Float32Array(size);
-                const dyeR0 = new Float32Array(size);
-                const dyeG0 = new Float32Array(size);
-                const dyeB0 = new Float32Array(size);
+                /* Fluid Dynamics State Grids */
+                const u = new Float32Array(gridTotal);
+                const v = new Float32Array(gridTotal);
+                const u0 = new Float32Array(gridTotal);
+                const v0 = new Float32Array(gridTotal);
+                const p = new Float32Array(gridTotal);
+                const div = new Float32Array(gridTotal);
+                const curl = new Float32Array(gridTotal);
+                const obstacle = new Uint8Array(gridTotal);
 
-                /* Solid Boundary Obstacle Mask */
-                const obstacle = new Uint8Array(size);
+                /* Obstacle Position on Simulation Grid */
+                const obsX = Math.floor(GW * 0.30);
+                const obsY = Math.floor(GH * 0.50);
 
-                /* Obstacle Center */
-                let obsX = Math.floor(W * 0.3);
-                let obsY = Math.floor(H * 0.5);
+                const IX = (x, y) => Math.max(0, Math.min(GW - 1, Math.floor(x))) + Math.max(0, Math.min(GH - 1, Math.floor(y))) * GW;
 
-                const IX = (x, y) => Math.max(0, Math.min(W - 1, x)) + Math.max(0, Math.min(H - 1, y)) * W;
+                /* High-Precision Particle Streamline Engine */
+                let particles = [];
+                const initParticles = () => {
+                    particles = new Array(particleCount);
+                    for (let i = 0; i < particleCount; i++) {
+                        particles[i] = {
+                            x: Math.random() * GW,
+                            y: Math.random() * GH,
+                            age: Math.random() * 120,
+                            life: 60 + Math.random() * 100,
+                            history: [],
+                            hue: (Math.random() * 60 + 180) /* Deep blues to sky teals */
+                        };
+                    }
+                };
+                initParticles();
 
-                /* Build Obstacle Geometry Mask */
                 const updateObstacle = () => {
                     obstacle.fill(0);
                     if (obstacleType === 'none') return;
@@ -169,33 +175,29 @@
                     const cosA = Math.cos(radAngle);
                     const sinA = Math.sin(radAngle);
 
-                    for (let y = 0; y < H; y++) {
-                        for (let x = 0; x < W; x++) {
+                    for (let y = 0; y < GH; y++) {
+                        for (let x = 0; x < GW; x++) {
                             const dx = x - obsX;
                             const dy = y - obsY;
 
-                            /* Rotate coords by Angle of Attack */
+                            /* Transform into obstacle rotated frame */
                             const rx = dx * cosA - dy * sinA;
                             const ry = dx * sinA + dy * cosA;
 
                             let inside = false;
 
                             if (obstacleType === 'cylinder') {
-                                if (dx * dx + dy * dy <= obstacleSize * obstacleSize) {
-                                    inside = true;
-                                }
+                                if (dx * dx + dy * dy <= (obstacleSize * 0.45) ** 2) inside = true;
                             } 
                             else if (obstacleType === 'flatPlate') {
-                                if (Math.abs(rx) <= obstacleSize * 1.2 && Math.abs(ry) <= 3) {
-                                    inside = true;
-                                }
+                                if (Math.abs(rx) <= obstacleSize * 0.8 && Math.abs(ry) <= 2.2) inside = true;
                             }
                             else if (obstacleType === 'airfoil') {
-                                /* NACA Airfoil Profile approximation */
-                                const chord = obstacleSize * 2.8;
-                                const xc = (rx + chord * 0.3) / chord;
+                                /* NACA 0015 Airfoil Formula */
+                                const chord = obstacleSize * 2.2;
+                                const xc = (rx + chord * 0.32) / chord;
                                 if (xc >= 0 && xc <= 1) {
-                                    const yt = 5 * 0.12 * (
+                                    const yt = 5 * 0.15 * (
                                         0.2969 * Math.sqrt(xc) - 
                                         0.1260 * xc - 
                                         0.3516 * Math.pow(xc, 2) + 
@@ -205,45 +207,61 @@
                                     if (Math.abs(ry) <= yt) inside = true;
                                 }
                             }
+                            else if (obstacleType === 'shuttle') {
+                                /* Blended Wing Body / Space Plane Profile */
+                                const length = obstacleSize * 2.5;
+                                const xc = (rx + length * 0.4) / length;
+                                if (xc >= 0 && xc <= 1) {
+                                    const width = Math.sin(xc * Math.PI) * (obstacleSize * 0.45);
+                                    if (Math.abs(ry) <= width) inside = true;
+                                }
+                            }
                             else if (obstacleType === 'nozzle') {
-                                /* Convergent-Divergent Nozzle Wall Obstacles */
-                                const nw = W * 0.5;
+                                /* CD Nozzle Throttle Profile */
+                                const nw = GW * 0.55;
                                 if (x >= obsX - nw/2 && x <= obsX + nw/2) {
                                     const nx = (x - (obsX - nw/2)) / nw;
-                                    let wallY;
-                                    if (nx < 0.4) {
-                                        wallY = H * 0.15 + (0.4 - nx) * H * 0.3;
-                                    } else {
-                                        wallY = H * 0.15 + (nx - 0.4) * H * 0.45;
-                                    }
-                                    if (y < wallY || y > H - wallY) inside = true;
+                                    let wallY = (nx < 0.35) ? (GH * 0.16 + (0.35 - nx) * GH * 0.28) : (GH * 0.16 + (nx - 0.35) * GH * 0.38);
+                                    if (y < wallY || y > GH - wallY) inside = true;
                                 }
                             }
 
-                            if (inside) {
-                                obstacle[IX(x, y)] = 1;
-                            }
+                            if (inside) obstacle[IX(x, y)] = 1;
                         }
                     }
                 };
 
                 updateObstacle();
 
-                /* Bilinear Semi-Lagrangian Advection Step */
+                const sampleVelocity = (px, py) => {
+                    const x0 = Math.max(0, Math.min(GW - 2, Math.floor(px)));
+                    const y0 = Math.max(0, Math.min(GH - 2, Math.floor(py)));
+                    const fx = px - x0;
+                    const fy = py - y0;
+
+                    const i00 = IX(x0, y0);
+                    const i10 = IX(x0 + 1, y0);
+                    const i01 = IX(x0, y0 + 1);
+                    const i11 = IX(x0 + 1, y0 + 1);
+
+                    const vx = (1 - fx) * ((1 - fy) * u[i00] + fy * u[i01]) + fx * ((1 - fy) * u[i10] + fy * u[i11]);
+                    const vy = (1 - fx) * ((1 - fy) * v[i00] + fy * v[i01]) + fx * ((1 - fy) * v[i10] + fy * v[i11]);
+
+                    return [vx, vy];
+                };
+
+                /* Advect Step */
                 const advect = (field, field0, dt) => {
-                    for (let y = 1; y < H - 1; y++) {
-                        for (let x = 1; x < W - 1; x++) {
+                    for (let y = 1; y < GH - 1; y++) {
+                        for (let x = 1; x < GW - 1; x++) {
                             const idx = IX(x, y);
-                            if (obstacle[idx]) {
-                                field[idx] = 0;
-                                continue;
-                            }
+                            if (obstacle[idx]) { field[idx] = 0; continue; }
 
                             let prevX = x - dt * u[idx];
                             let prevY = y - dt * v[idx];
 
-                            prevX = Math.max(0.5, Math.min(W - 1.5, prevX));
-                            prevY = Math.max(0.5, Math.min(H - 1.5, prevY));
+                            prevX = Math.max(0.5, Math.min(GW - 1.5, prevX));
+                            prevY = Math.max(0.5, Math.min(GH - 1.5, prevY));
 
                             const i0 = Math.floor(prevX);
                             const i1 = i0 + 1;
@@ -261,61 +279,48 @@
                     }
                 };
 
-                /* Pressure Poisson Solver (Incompressibility Projection) */
                 const project = () => {
-                    for (let y = 1; y < H - 1; y++) {
-                        for (let x = 1; x < W - 1; x++) {
+                    for (let y = 1; y < GH - 1; y++) {
+                        for (let x = 1; x < GW - 1; x++) {
                             const idx = IX(x, y);
-                            if (obstacle[idx]) {
-                                div[idx] = 0;
-                                p[idx] = 0;
-                                continue;
-                            }
+                            if (obstacle[idx]) { div[idx] = 0; p[idx] = 0; continue; }
                             div[idx] = -0.5 * (u[IX(x + 1, y)] - u[IX(x - 1, y)] + v[IX(x, y + 1)] - v[IX(x, y - 1)]);
                             p[idx] = 0;
                         }
                     }
 
                     for (let k = 0; k < solverIters; k++) {
-                        for (let y = 1; y < H - 1; y++) {
-                            for (let x = 1; x < W - 1; x++) {
+                        for (let y = 1; y < GH - 1; y++) {
+                            for (let x = 1; x < GW - 1; x++) {
                                 const idx = IX(x, y);
                                 if (obstacle[idx]) continue;
-
                                 p[idx] = (div[idx] + p[IX(x + 1, y)] + p[IX(x - 1, y)] + p[IX(x, y + 1)] + p[IX(x, y - 1)]) / 4;
                             }
                         }
                     }
 
-                    for (let y = 1; y < H - 1; y++) {
-                        for (let x = 1; x < W - 1; x++) {
+                    for (let y = 1; y < GH - 1; y++) {
+                        for (let x = 1; x < GW - 1; x++) {
                             const idx = IX(x, y);
-                            if (obstacle[idx]) {
-                                u[idx] = 0;
-                                v[idx] = 0;
-                                continue;
-                            }
-
+                            if (obstacle[idx]) { u[idx] = 0; v[idx] = 0; continue; }
                             u[idx] -= 0.5 * (p[IX(x + 1, y)] - p[IX(x - 1, y)]);
                             v[idx] -= 0.5 * (p[IX(x, y + 1)] - p[IX(x, y - 1)]);
                         }
                     }
                 };
 
-                /* Vorticity Confinement */
                 const applyVorticity = () => {
-                    if (vorticityBoost <= 0) return;
-
-                    const curl = new Float32Array(size);
-                    for (let y = 1; y < H - 1; y++) {
-                        for (let x = 1; x < W - 1; x++) {
+                    for (let y = 1; y < GH - 1; y++) {
+                        for (let x = 1; x < GW - 1; x++) {
                             const idx = IX(x, y);
                             curl[idx] = (v[IX(x + 1, y)] - v[IX(x - 1, y)]) - (u[IX(x, y + 1)] - u[IX(x, y - 1)]);
                         }
                     }
 
-                    for (let y = 2; y < H - 2; y++) {
-                        for (let x = 2; x < W - 2; x++) {
+                    if (vorticityBoost <= 0) return;
+
+                    for (let y = 2; y < GH - 2; y++) {
+                        for (let x = 2; x < GW - 2; x++) {
                             const idx = IX(x, y);
                             if (obstacle[idx]) continue;
 
@@ -326,147 +331,158 @@
                             const nx = dw_dx / len;
                             const ny = dw_dy / len;
 
-                            u[idx] += nx * curl[idx] * vorticityBoost * 0.018;
-                            v[idx] += ny * curl[idx] * vorticityBoost * 0.018;
+                            u[idx] += nx * curl[idx] * vorticityBoost * 0.02;
+                            v[idx] += ny * curl[idx] * vorticityBoost * 0.02;
                         }
                     }
                 };
 
-                /* Inflow Boundaries & Dye Injectors */
                 const applyInflow = () => {
-                    const numLines = 18;
-                    const lineSpacing = H / (numLines + 1);
-
-                    for (let y = 0; y < H; y++) {
-                        const isBoundaryWall = (scene === 'windTunnel') && (y === 0 || y === H - 1);
-                        
+                    for (let y = 0; y < GH; y++) {
+                        const isWall = (scene === 'windTunnel') && (y === 0 || y === GH - 1);
                         for (let x = 0; x < 3; x++) {
                             const idx = IX(x, y);
-                            if (isBoundaryWall) {
-                                u[idx] = 0;
-                                v[idx] = 0;
+                            if (isWall) {
+                                u[idx] = 0; v[idx] = 0;
                             } else {
-                                u[idx] = inflowSpeed * (scene === 'supersonic' ? 2.2 : 1.0);
+                                u[idx] = inflowSpeed * (scene === 'supersonic' ? 2.4 : 1.0);
                                 v[idx] = 0;
-                            }
-                        }
-
-                        const lineIdx = Math.floor(y / lineSpacing);
-                        const distToLine = Math.abs(y - (lineIdx * lineSpacing + lineSpacing/2));
-
-                        if (distToLine < 1.3) {
-                            const hue = (lineIdx / numLines) * 320;
-                            const rgb = hslToRgb(hue / 360, 0.95, 0.6);
-
-                            for (let x = 1; x < 4; x++) {
-                                const idx = IX(x, y);
-                                dyeR[idx] = rgb[0];
-                                dyeG[idx] = rgb[1];
-                                dyeB[idx] = rgb[2];
                             }
                         }
                     }
                 };
 
-                function hslToRgb(h, s, l) {
-                    let r, g, b;
-                    if (s === 0) {
-                        r = g = b = l;
-                    } else {
-                        const hue2rgb = (p, q, t) => {
-                            if (t < 0) t += 1;
-                            if (t > 1) t -= 1;
-                            if (t < 1/6) return p + (q - p) * 6 * t;
-                            if (t < 1/2) return q;
-                            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-                            return p;
-                        };
-                        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-                        const p = 2 * l - q;
-                        r = hue2rgb(p, q, h + 1/3);
-                        g = hue2rgb(p, q, h);
-                        b = hue2rgb(p, q, h - 1/3);
-                    }
-                    return [r * 255, g * 255, b * 255];
-                }
-
                 const render = () => {
-                    const data = imgData.data;
+                    ctx.clearRect(0, 0, displayW, displayH);
 
-                    for (let y = 0; y < H; y++) {
-                        for (let x = 0; x < W; x++) {
-                            const idx = IX(x, y);
-                            const pix = idx * 4;
+                    const scaleX = displayW / GW;
+                    const scaleY = displayH / GH;
 
-                            if (obstacle[idx]) {
-                                data[pix] = 12;
-                                data[pix + 1] = 18;
-                                data[pix + 2] = 32;
-                                data[pix + 3] = 255;
-                                continue;
-                            }
+                    /* Background Field Contour Rendering */
+                    if (visMode !== 'particles') {
+                        const cellW = Math.ceil(scaleX);
+                        const cellH = Math.ceil(scaleY);
 
-                            if (visMode === 'dye') {
-                                data[pix] = Math.min(255, dyeR[idx]);
-                                data[pix + 1] = Math.min(255, dyeG[idx]);
-                                data[pix + 2] = Math.min(255, dyeB[idx]);
-                                data[pix + 3] = 255;
-                            }
-                            else if (visMode === 'speed') {
-                                const spd = Math.sqrt(u[idx] * u[idx] + v[idx] * v[idx]) / (inflowSpeed * 2.2 + 0.1);
-                                const norm = Math.min(1.0, spd);
+                        for (let y = 0; y < GH; y++) {
+                            for (let x = 0; x < GW; x++) {
+                                const idx = IX(x, y);
+                                if (obstacle[idx]) continue;
 
-                                data[pix] = Math.floor(Math.sin(norm * Math.PI) * 255);
-                                data[pix + 1] = Math.floor(Math.sin(norm * Math.PI * 0.7) * 200 + norm * 55);
-                                data[pix + 2] = Math.floor((1 - norm) * 255);
-                                data[pix + 3] = 255;
-                            }
-                            else if (visMode === 'curl') {
-                                const curlVal = (v[IX(Math.min(W-1, x + 1), y)] - v[IX(Math.max(0, x - 1), y)]) - 
-                                                (u[IX(x, Math.min(H-1, y + 1))] - u[IX(x, Math.max(0, y - 1))]);
-                                const val = Math.max(-1, Math.min(1, curlVal * 1.5));
+                                let fillStyle = '#000000';
 
-                                if (val > 0) {
-                                    data[pix] = Math.floor(val * 255);
-                                    data[pix + 1] = Math.floor(val * 70);
-                                    data[pix + 2] = 30;
-                                } else {
-                                    data[pix] = 20;
-                                    data[pix + 1] = Math.floor(-val * 170);
-                                    data[pix + 2] = Math.floor(-val * 255);
+                                if (visMode === 'speed') {
+                                    const spd = Math.sqrt(u[idx] ** 2 + v[idx] ** 2) / (inflowSpeed * 2.5 + 0.1);
+                                    const norm = Math.min(1.0, spd);
+                                    fillStyle = `hsla(${220 - norm * 220}, 90%, ${15 + norm * 45}%, 0.85)`;
                                 }
-                                data[pix + 3] = 255;
-                            }
-                            else if (visMode === 'pressure') {
-                                const prs = p[idx] * 4.0;
-                                const normP = Math.max(-1, Math.min(1, prs));
-
-                                if (normP > 0) {
-                                    data[pix] = Math.floor(normP * 255);
-                                    data[pix + 1] = Math.floor(normP * 120);
-                                    data[pix + 2] = 20;
-                                } else {
-                                    data[pix] = 20;
-                                    data[pix + 1] = Math.floor(-normP * 180);
-                                    data[pix + 2] = Math.floor(-normP * 255);
+                                else if (visMode === 'vorticity') {
+                                    const val = Math.max(-1, Math.min(1, curl[idx] * 1.8));
+                                    if (val > 0) {
+                                        fillStyle = `rgba(${Math.floor(val * 255)}, ${Math.floor(val * 80)}, 40, 0.85)`;
+                                    } else {
+                                        fillStyle = `rgba(30, ${Math.floor(-val * 180)}, ${Math.floor(-val * 255)}, 0.85)`;
+                                    }
                                 }
-                                data[pix + 3] = 255;
+                                else if (visMode === 'pressure') {
+                                    const prs = p[idx] * 4.5;
+                                    const normP = Math.max(-1, Math.min(1, prs));
+                                    if (normP > 0) {
+                                        fillStyle = `rgba(${Math.floor(normP * 255)}, 50, 50, 0.85)`;
+                                    } else {
+                                        fillStyle = `rgba(40, 140, ${Math.floor(-normP * 255)}, 0.85)`;
+                                    }
+                                }
+                                else if (visMode === 'schlieren') {
+                                    const gradU = Math.abs(u[IX(Math.min(GW-1, x+1), y)] - u[IX(Math.max(0, x-1), y)]);
+                                    const gradV = Math.abs(v[IX(x, Math.min(GH-1, y+1))] - v[IX(x, Math.max(0, y-1))]);
+                                    const mag = Math.min(1.0, (gradU + gradV) * 0.8);
+                                    const val = Math.floor((1 - mag) * 245);
+                                    fillStyle = `rgb(${val}, ${val}, ${val})`;
+                                }
+
+                                ctx.fillStyle = fillStyle;
+                                ctx.fillRect(x * scaleX, y * scaleY, cellW + 0.5, cellH + 0.5);
                             }
                         }
                     }
 
-                    /* Write to offscreen low-res grid canvas */
-                    offCtx.putImageData(imgData, 0, 0);
+                    /* Smooth Particle Streamlines */
+                    ctx.lineWidth = (visMode === 'particles') ? 1.4 : 1.0;
+                    ctx.lineCap = 'round';
 
-                    /* Smooth upscale draw onto presentation canvas with bilinear filter */
-                    displayCtx.imageSmoothingEnabled = true;
-                    displayCtx.imageSmoothingQuality = 'high';
-                    displayCtx.drawImage(offCanvas, 0, 0, displayCanvas.width, displayCanvas.height);
+                    for (let i = 0; i < particles.length; i++) {
+                        const pt = particles[i];
 
-                    /* Render Border Outline */
-                    displayCtx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
-                    displayCtx.lineWidth = 2;
-                    displayCtx.strokeRect(0, 0, displayCanvas.width, displayCanvas.height);
+                        const [vx1, vy1] = sampleVelocity(pt.x, pt.y);
+                        const [vx2, vy2] = sampleVelocity(pt.x + vx1 * 0.5, pt.y + vy1 * 0.5);
+
+                        const pxNew = pt.x + vx2 * 0.8;
+                        const pyNew = pt.y + vy2 * 0.8;
+
+                        const isBlocked = obstacle[IX(pxNew, pyNew)];
+                        if (pxNew >= GW - 1 || pxNew <= 0 || pyNew >= GH - 1 || pyNew <= 0 || isBlocked || pt.age > pt.life) {
+                            pt.x = Math.random() * 4;
+                            pt.y = Math.random() * GH;
+                            pt.age = 0;
+                            pt.history = [];
+                            pt.hue = (pt.y / GH) * 160 + 170;
+                            continue;
+                        }
+
+                        pt.history.push({ x: pt.x * scaleX, y: pt.y * scaleY });
+                        if (pt.history.length > 8) pt.history.shift();
+
+                        pt.x = pxNew;
+                        pt.y = pyNew;
+                        pt.age++;
+
+                        if (pt.history.length > 1) {
+                            ctx.beginPath();
+                            ctx.moveTo(pt.history[0].x, pt.history[0].y);
+                            for (let h = 1; h < pt.history.length; h++) {
+                                ctx.lineTo(pt.history[h].x, pt.history[h].y);
+                            }
+
+                            const speedMag = Math.sqrt(vx2 * vx2 + vy2 * vy2);
+                            const alpha = Math.min(1.0, (pt.age / 10)) * (1 - pt.age / pt.life);
+
+                            if (visMode === 'particles') {
+                                ctx.strokeStyle = `hsla(${pt.hue + speedMag * 15}, 95%, 60%, ${alpha * 0.85})`;
+                            } else {
+                                ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
+                            }
+                            ctx.stroke();
+                        }
+                    }
+
+                    /* Render Solid Obstacle Geometry */
+                    ctx.save();
+                    ctx.fillStyle = '#0f172a';
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.lineWidth = 2.5;
+                    ctx.shadowColor = 'rgba(56, 189, 248, 0.6)';
+                    ctx.shadowBlur = 12;
+
+                    ctx.beginPath();
+                    for (let y = 0; y < GH; y++) {
+                        for (let x = 0; x < GW; x++) {
+                            if (obstacle[IX(x, y)]) {
+                                ctx.rect(x * scaleX, y * scaleY, scaleX + 0.3, scaleY + 0.3);
+                            }
+                        }
+                    }
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+
+                    if (scene === 'windTunnel') {
+                        ctx.strokeStyle = 'rgba(148, 163, 184, 0.5)';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(0, 2); ctx.lineTo(displayW, 2);
+                        ctx.moveTo(0, displayH - 2); ctx.lineTo(displayW, displayH - 2);
+                        ctx.stroke();
+                    }
                 };
 
                 let lastTime = performance.now();
@@ -482,17 +498,6 @@
 
                         applyVorticity();
                         project();
-
-                        dyeR0.set(dyeR); dyeG0.set(dyeG); dyeB0.set(dyeB);
-                        advect(dyeR, dyeR0, 1.0);
-                        advect(dyeG, dyeG0, 1.0);
-                        advect(dyeB, dyeB0, 1.0);
-
-                        for (let i = 0; i < size; i++) {
-                            dyeR[i] *= dyeFade;
-                            dyeG[i] *= dyeFade;
-                            dyeB[i] *= dyeFade;
-                        }
 
                         render();
                     }
@@ -513,23 +518,19 @@
                 simRef.current = {
                     reset: () => {
                         u.fill(0); v.fill(0); p.fill(0);
-                        dyeR.fill(0); dyeG.fill(0); dyeB.fill(0);
+                        initParticles();
                     },
                     stir: (cx, cy, radius, forceX, forceY) => {
-                        const gx = Math.floor((cx / displayCanvas.clientWidth) * W);
-                        const gy = Math.floor((cy / displayCanvas.clientHeight) * H);
+                        const gx = Math.floor((cx / displayW) * GW);
+                        const gy = Math.floor((cy / displayH) * GH);
                         const rGrid = Math.floor(radius);
 
                         for (let y = gy - rGrid; y <= gy + rGrid; y++) {
                             for (let x = gx - rGrid; x <= gx + rGrid; x++) {
-                                if (x >= 0 && x < W && y >= 0 && y < H) {
+                                if (x >= 0 && x < GW && y >= 0 && y < GH) {
                                     const idx = IX(x, y);
-                                    u[idx] += forceX * 0.18;
-                                    v[idx] += forceY * 0.18;
-
-                                    dyeR[idx] = 255;
-                                    dyeG[idx] = 255;
-                                    dyeB[idx] = 255;
+                                    u[idx] += forceX * 0.25;
+                                    v[idx] += forceY * 0.25;
                                 }
                             }
                         }
@@ -539,7 +540,7 @@
                 return () => {
                     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
                 };
-            }, [scene, visMode, obstacleType, obstacleSize, aoa, inflowSpeed, vorticityBoost, solverIters, dyeFade, resolution, isPaused]);
+            }, [scene, visMode, obstacleType, obstacleSize, aoa, inflowSpeed, vorticityBoost, particleCount, solverIters, isPaused]);
 
             const handleCanvasPointer = (e) => {
                 if (!displayCanvasRef.current || !simRef.current) return;
@@ -548,32 +549,32 @@
                 const y = e.clientY - rect.top;
 
                 if (e.buttons === 1) {
-                    simRef.current.stir(x, y, 12, e.movementX, e.movementY);
+                    simRef.current.stir(x, y, 10, e.movementX, e.movementY);
                 }
             };
 
             return (
                 <div className="flex flex-col lg:flex-row gap-6 w-full p-2">
-                    {/* Control Panel */}
+                    {/* Control Sidebar */}
                     <div className="w-full lg:w-1/3 flex flex-col gap-5">
-                        <div className="bg-slate-900/80 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
+                        <div className="bg-slate-900/85 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
                             <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
                                 <h4 className="font-bold text-sky-400 text-lg flex items-center gap-2">
-                                    <span>🌊 Navier-Stokes Fluid Solver</span>
+                                    <span>🌊 CFD Vector Fluid Solver</span>
                                 </h4>
-                                <span className="text-xs font-mono bg-sky-950 text-sky-300 border border-sky-800 px-2 py-0.5 rounded-full">
+                                <span className="text-xs font-mono bg-sky-950 text-sky-300 border border-sky-800 px-2.5 py-1 rounded-full font-bold">
                                     {fps} FPS
                                 </span>
                             </div>
 
                             {/* Scene Mode */}
                             <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Scene Mode</label>
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Test Environment</label>
                                 <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                                     {['windTunnel', 'supersonic', 'openFlow'].map(m => (
                                         <button key={m} onClick={()=>setScene(m)}
                                                 className={`py-1.5 px-2 text-xs font-bold rounded-lg capitalize transition ${scene === m ? 'bg-sky-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                                            {m === 'windTunnel' ? 'Wind Tunnel' : m === 'supersonic' ? 'Supersonic' : 'Open Flow'}
+                                            {m === 'windTunnel' ? 'Wind Tunnel' : m === 'supersonic' ? 'Supersonic' : 'Free Stream'}
                                         </button>
                                     ))}
                                 </div>
@@ -581,38 +582,45 @@
 
                             {/* Visualization Mode */}
                             <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Visualization Contour</label>
-                                <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                                    {['dye', 'speed', 'curl', 'pressure'].map(v => (
-                                        <button key={v} onClick={()=>setVisMode(v)}
-                                                className={`py-1.5 px-1 text-xs font-bold rounded-lg capitalize transition ${visMode === v ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                                            {v}
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Flow Visualization</label>
+                                <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                                    {[
+                                        { id: 'particles', label: 'Smoke Trails' },
+                                        { id: 'speed', label: 'Velocity' },
+                                        { id: 'vorticity', label: 'Vorticity' },
+                                        { id: 'pressure', label: 'Pressure' },
+                                        { id: 'schlieren', label: 'Schlieren' }
+                                    ].map(v => (
+                                        <button key={v.id} onClick={()=>setVisMode(v.id)}
+                                                className={`py-1.5 px-1 text-xs font-bold rounded-lg transition ${visMode === v.id ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                                            {v.label}
                                         </button>
                                     ))}
                                 </div>
                             </div>
 
-                            {/* Obstacle Type */}
+                            {/* Obstacle Selection */}
                             <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Obstacle Geometry</label>
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Aerodynamic Model</label>
                                 <select className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-sm font-semibold text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-500"
                                         value={obstacleType} onChange={e=>setObstacleType(e.target.value)}>
-                                    <option value="airfoil">Airfoil (NACA Profile)</option>
-                                    <option value="cylinder">Circular Cylinder</option>
-                                    <option value="flatPlate">Flat Plate</option>
-                                    <option value="nozzle">Convergent-Divergent Nozzle</option>
-                                    <option value="none">None (Free Stream)</option>
+                                    <option value="airfoil">NACA Airfoil Profile</option>
+                                    <option value="shuttle">Space Plane / Shuttle</option>
+                                    <option value="cylinder">Circular Cylinder (Vortex Shedding)</option>
+                                    <option value="flatPlate">Flat Plate / Normal Deflector</option>
+                                    <option value="nozzle">CD Rocket Nozzle Duct</option>
+                                    <option value="none">Free Laminar Flow</option>
                                 </select>
                             </div>
 
-                            {/* Sliders */}
+                            {/* Physics Sliders */}
                             <div className="space-y-3 pt-2">
                                 <label className="flex flex-col text-xs font-semibold text-slate-300">
                                     <span className="flex justify-between">
-                                        <span>Inflow Velocity (U∞)</span>
+                                        <span>Freestream Velocity (U∞)</span>
                                         <span className="font-mono text-sky-400">{inflowSpeed.toFixed(1)}</span>
                                     </span>
-                                    <input type="range" min="0.5" max="4.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
+                                    <input type="range" min="0.5" max="4.5" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
                                 </label>
 
                                 <label className="flex flex-col text-xs font-semibold text-slate-300">
@@ -625,57 +633,50 @@
 
                                 <label className="flex flex-col text-xs font-semibold text-slate-300">
                                     <span className="flex justify-between">
-                                        <span>Vorticity Boost (Curl)</span>
+                                        <span>Streamline Density</span>
+                                        <span className="font-mono text-sky-400">{particleCount}</span>
+                                    </span>
+                                    <input type="range" min="1000" max="6000" step="500" value={particleCount} onChange={e=>setParticleCount(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                    <span className="flex justify-between">
+                                        <span>Vorticity Confinement</span>
                                         <span className="font-mono text-sky-400">{vorticityBoost.toFixed(1)}</span>
                                     </span>
                                     <input type="range" min="0" max="6.0" step="0.2" value={vorticityBoost} onChange={e=>setVorticityBoost(Number(e.target.value))}/>
                                 </label>
-
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
-                                    <span className="flex justify-between">
-                                        <span>Pressure Iterations</span>
-                                        <span className="font-mono text-sky-400">{solverIters}</span>
-                                    </span>
-                                    <input type="range" min="8" max="60" step="2" value={solverIters} onChange={e=>setSolverIters(Number(e.target.value))}/>
-                                </label>
-
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
-                                    <span className="flex justify-between">
-                                        <span>Grid Resolution</span>
-                                        <span className="font-mono text-sky-400">{resolution} x {Math.floor(resolution/2)}</span>
-                                    </span>
-                                    <input type="range" min="100" max="240" step="20" value={resolution} onChange={e=>setResolution(Number(e.target.value))}/>
-                                </label>
                             </div>
 
-                            {/* Buttons */}
+                            {/* Controls */}
                             <div className="flex gap-2 pt-2">
                                 <button onClick={()=>setIsPaused(!isPaused)} 
-                                        className={`flex-1 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition ${isPaused ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white'}`}>
+                                        className={`flex-1 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition ${isPaused ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
                                     {isPaused ? '▶ Resume' : '⏸ Pause'}
                                 </button>
                                 <button onClick={()=>simRef.current?.reset()} 
                                         className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition border border-slate-700">
-                                    🔄 Clear Fluid
+                                    🔄 Reset Flow
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    {/* Canvas Viewport */}
-                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-3 shadow-2xl relative overflow-hidden min-h-[380px]">
-                        <div className="absolute top-4 left-5 text-xs font-mono bg-slate-900/90 text-sky-300 px-3 py-1 rounded-full border border-slate-700 z-10 pointer-events-none shadow-md">
-                            Interactive Canvas • Click & Drag to Stir Fluid
+                    {/* High Precision Graphics Viewport */}
+                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-3 shadow-2xl relative overflow-hidden min-h-[400px]">
+                        <div className="absolute top-4 left-5 text-xs font-mono bg-slate-900/90 text-sky-300 px-3.5 py-1.5 rounded-full border border-slate-700 z-10 pointer-events-none shadow-lg flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
+                            <span>High-DPI Vector Streamlines • Interactive (Click & Drag to Stir Flow)</span>
                         </div>
 
                         <canvas ref={displayCanvasRef} 
                                 onPointerDown={handleCanvasPointer} 
                                 onPointerMove={handleCanvasPointer}
-                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800 shadow-inner bg-black" />
+                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800/90 shadow-2xl bg-slate-950" />
 
                         <div className="w-full flex justify-between items-center px-3 py-2 text-xs text-slate-400 font-mono">
-                            <span>Visualization Mode: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
-                            <span>Engine: <strong className="text-emerald-400">Navier-Stokes (Dual-Canvas GPU/CPU Grid)</strong></span>
+                            <span>Visualization: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
+                            <span>Engine: <strong className="text-emerald-400">Navier-Stokes RK2 Streamline Advection</strong></span>
                         </div>
                     </div>
                 </div>
@@ -683,14 +684,12 @@
         };
 
         const RocketEngineSizer = () => {
-            /* Control States */
             const [thrust, setThrust] = React.useState(35); /* kN */
             const [pc, setPc] = React.useState(4.0); /* MPa */
             const [pa, setPa] = React.useState(101.3); /* kPa */
             const [propellant, setPropellant] = React.useState('N2O/Ethanol');
-            const [contractionRatio, setContractionRatio] = React.useState(3.5); /* Ac / At */
+            const [contractionRatio, setContractionRatio] = React.useState(3.5);
 
-            /* Propellant Data */
             const propData = {
                 'N2O/Ethanol':   { gamma: 1.23, mw: 25.2, Tc: 3050, Lstar: 1.25, name: "N₂O / Ethanol (Nitrous Biprop)" },
                 'N2O/Isopropyl': { gamma: 1.22, mw: 26.1, Tc: 2980, Lstar: 1.20, name: "N₂O / Isopropyl Alcohol (IPA)" },
@@ -702,7 +701,6 @@
             const g0 = 9.80665;
             const Ru = 8314.46;
 
-            /* Engine Calculations */
             const calculateEngine = () => {
                 const data = propData[propellant];
                 const y = data.gamma;
@@ -715,39 +713,29 @@
                 if (Pc_Pa <= Pa_Pa) return null;
 
                 const pressureRatio = Pc_Pa / Pa_Pa;
-
-                /* Exit Mach Number (Me) */
                 const term1 = Math.max(0, Math.pow(pressureRatio, (y - 1) / y) - 1);
                 const Me = Math.sqrt((2 / (y - 1)) * term1);
 
-                /* Expansion Ratio (epsilon = Ae / At) */
                 const term2 = (2 + (y - 1) * Math.pow(Me, 2)) / (y + 1);
                 const epsilon = Math.max(1.0, (1 / (Me || 1)) * Math.pow(term2, (y + 1) / (2 * (y - 1))));
 
-                /* Thrust Coefficient (Cf) */
                 const Cf = Math.sqrt(
                     ((2 * Math.pow(y, 2)) / (y - 1)) * 
                     Math.pow(2 / (y + 1), (y + 1) / (y - 1)) * 
                     (1 - Math.pow(1 / pressureRatio, (y - 1) / y))
                 );
 
-                /* Characteristic Velocity (c*) */
                 const cStar = Math.sqrt(y * R * data.Tc) / 
                               (y * Math.sqrt(Math.pow(2 / (y + 1), (y + 1) / (y - 1))));
 
-                /* Specific Impulse (Isp) */
                 const Isp = (Cf * cStar) / g0;
 
-                /* Throat & Exit Areas */
                 const At = F_N / (Pc_Pa * Cf);
                 const Ae = epsilon * At;
                 const Dt = Math.sqrt((4 * At) / Math.PI);
                 const De = Math.sqrt((4 * Ae) / Math.PI);
-
-                /* Mass Flow Rate */
                 const mDot = F_N / (Isp * g0);
 
-                /* Chamber Geometry */
                 const Ac = contractionRatio * At;
                 const Dc = Math.sqrt((4 * Ac) / Math.PI);
                 const Vc = data.Lstar * At;
@@ -760,15 +748,11 @@
                 const L_cyl = V_cyl / Ac;
                 const tau_r = (data.Lstar / cStar) * 1000;
 
-                return { 
-                    Me, epsilon, Cf, cStar, Isp, At, Ae, Dt, De, mDot, 
-                    Ac, Dc, Vc, L_cyl, L_conv, tau_r 
-                };
+                return { Me, epsilon, Cf, cStar, Isp, At, Ae, Dt, De, mDot, Ac, Dc, Vc, L_cyl, L_conv, tau_r };
             };
 
             const results = calculateEngine();
 
-            /* Robust SVG Geometry Construction (Continuous Single Loop Path) */
             const renderNozzleSVG = () => {
                 if (!results) return null;
 
@@ -788,14 +772,10 @@
                 const x_throat = x_cyl_end + Math.min(Math.max(results.L_conv * scale * 2.5, 45), 90);
                 const x_exit = Math.min(x_throat + 210, width - 40);
 
-                /* Form smooth continuous outer boundary loop string */
                 const topContour = `L ${x_cyl_end},${centerY - r_c} L ${x_throat},${centerY - r_t} C ${x_throat + 40},${centerY - r_t} ${x_exit - 60},${centerY - r_e} ${x_exit},${centerY - r_e}`;
                 const bottomContour = `L ${x_exit},${centerY + r_e} C ${x_exit - 60},${centerY + r_e} ${x_throat + 40},${centerY + r_t} ${x_throat},${centerY + r_t} L ${x_cyl_end},${centerY + r_c} L ${x_inj},${centerY + r_c}`;
 
-                /* Clean closed flame path */
                 const flameD = `M ${x_inj},${centerY - r_c} ${topContour} ${bottomContour} Z`;
-
-                /* Separate lines for wall stroke rendering */
                 const strokeTop = `M ${x_inj},${centerY - r_c} ${topContour}`;
                 const strokeBottom = `M ${x_inj},${centerY + r_c} L ${x_cyl_end},${centerY + r_c} L ${x_throat},${centerY + r_t} C ${x_throat + 40},${centerY + r_t} ${x_exit - 60},${centerY + r_e} ${x_exit},${centerY + r_e}`;
 
@@ -815,20 +795,14 @@
                             </linearGradient>
                         </defs>
 
-                        {/* Solid Interior Chamber & Nozzle Flame Field */}
                         <path d={flameD} fill="url(#chamberFlame)" />
-                        
-                        {/* Exhaust Plume */}
                         <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 80},${centerY} ${x_exit},${centerY + r_e} Z`} fill="url(#plumeGrad)" />
 
-                        {/* Wall Shell Lines */}
                         <path d={strokeTop} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
                         <path d={strokeBottom} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
 
-                        {/* Injector Plate Header */}
                         <rect x={x_inj - 12} y={centerY - r_c - 8} width="12" height={r_c * 2 + 16} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" />
                         
-                        {/* Dimension Annotations */}
                         <text x={x_inj + 15} y={centerY - 8} className="text-xs fill-amber-300 font-mono font-bold">Dc: {(results.Dc * 100).toFixed(1)} cm</text>
                         <text x={x_throat} y={centerY - r_t - 10} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {(results.Dt * 100).toFixed(1)} cm</text>
                         <text x={x_exit} y={centerY - r_e - 10} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {(results.De * 100).toFixed(1)} cm</text>
@@ -838,9 +812,8 @@
 
             return (
                 <div className="flex flex-col lg:flex-row gap-6 w-full p-2">
-                    {/* Controls */}
                     <div className="w-full lg:w-1/3 flex flex-col gap-5">
-                        <div className="bg-slate-900/80 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
+                        <div className="bg-slate-900/85 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
                             <h4 className="font-bold text-amber-400 text-lg border-b border-slate-700/60 pb-2 flex items-center justify-between">
                                 <span>🚀 Liquid Rocket Engine Sizer</span>
                             </h4>
@@ -879,7 +852,6 @@
                             </label>
                         </div>
 
-                        {/* Combustion Results */}
                         <div className="bg-slate-900/90 text-white p-5 rounded-2xl border border-slate-700 shadow-xl flex-grow">
                             <h4 className="font-bold text-amber-300 border-b border-slate-700/80 pb-2 mb-3 text-sm">Combustion Results</h4>
                             {!results ? (
@@ -911,9 +883,8 @@
                         </div>
                     </div>
 
-                    {/* Geometry Display */}
                     <div className="w-full lg:w-2/3 min-h-[340px] bg-slate-950 rounded-2xl border-2 border-slate-800 flex flex-col items-center justify-center p-4 shadow-2xl relative overflow-hidden">
-                        <div className="absolute top-4 left-4 text-xs font-mono bg-slate-900/90 text-amber-300 px-3 py-1 rounded-full border border-slate-700 shadow-md">
+                        <div className="absolute top-4 left-4 text-xs font-mono bg-slate-900/90 text-amber-300 px-3.5 py-1.5 rounded-full border border-slate-700 shadow-md">
                             Geometry Schematic • {propData[propellant].name}
                         </div>
                         {renderNozzleSVG()}
@@ -962,7 +933,7 @@
                             </h2>
                             <p className="text-slate-300 leading-relaxed font-medium text-base">
                                 Passionate about <strong>Fluid Dynamics, Computational Aerodynamics, and Rocket Propulsion systems.</strong> 
-                                Building interactive mathematical models and GPU/CPU fluid solvers to simulate complex engineering physics in real time.
+                                Building interactive mathematical models and real-time CFD fluid solvers to simulate complex engineering physics.
                             </p>
                         </div>
 
@@ -979,19 +950,19 @@
                         </div>
                     </section>
 
-                    {/* Interactive Engineering Mechanics Section */}
+                    {/* Interactive Simulations */}
                     <section className="w-full flex flex-col items-center">
                         <div className="text-center max-w-3xl mb-12">
                             <h2 className="text-4xl font-extrabold text-white mb-3">Interactive Fluids & Propulsion Physics</h2>
                             <p className="text-lg text-slate-300 font-medium">
-                                Real-time numerical solvers and CFD simulation tools built natively in React.
+                                Real-time high-DPI vector fluid solvers and propulsion design tools built in React.
                             </p>
                         </div>
 
-                        {/* Replicated CFD Simulator */}
+                        {/* High-Resolution CFD Visualizer */}
                         <SimulationCard
-                            title="Interactive CFD Fluid Simulator (Navier-Stokes Grid Solver)"
-                            description="Replicated from real-time GPU/CPU fluid visualizers. Solves 2D incompressible Navier-Stokes equations with multi-colored dye injection, vorticity confinement, and pressure projection around custom obstacles."
+                            title="High-Resolution Vector CFD Fluid Simulator"
+                            description="Solves 2D incompressible Navier-Stokes equations with anti-aliased Runge-Kutta particle streamlines, vorticity confinement, pressure projection, and optical Schlieren imaging around aerospace geometries."
                         >
                             <CFDSimulator />
                         </SimulationCard>
@@ -1009,7 +980,7 @@
                     <footer className="pt-16 pb-10 text-center text-slate-400 font-medium flex flex-col items-center justify-center space-y-2">
                         <div className="w-24 h-1 bg-gradient-to-r from-sky-400 to-indigo-500 rounded-full mb-6"></div>
                         <p className="text-lg font-bold text-white">Cash Bilton</p>
-                        <p>© {new Date().getFullYear()} All rights reserved.</p>
+                        <p>&copy; {new Date().getFullYear()} All rights reserved.</p>
                         <p className="text-sm text-slate-500">Built with React & Tailwind CSS.</p>
                     </footer>
                 </div>

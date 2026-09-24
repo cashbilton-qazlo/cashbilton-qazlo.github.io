@@ -23,7 +23,7 @@
             font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
-            background: linear-gradient(-45deg, #0f172a, #1e1b4b, #0f172a, #172554);
+            background: linear-gradient(-45deg, #090d16, #0f172a, #1e1b4b, #090d16);
             background-size: 400% 400%;
             animation: gradientBG 20s ease infinite;
             color: #f8fafc;
@@ -39,7 +39,7 @@
 
         /* Glassmorphism Panels */
         .glass-panel {
-            background: rgba(15, 23, 42, 0.75);
+            background: rgba(15, 23, 42, 0.8);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -47,11 +47,11 @@
         }
         
         .glass-card {
-            background: rgba(30, 41, 59, 0.7);
+            background: rgba(15, 23, 42, 0.75);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            box-shadow: 0 10px 30px 0 rgba(0, 0, 0, 0.4);
+            box-shadow: 0 10px 30px 0 rgba(0, 0, 0, 0.5);
             border-radius: 1.5rem;
         }
 
@@ -83,7 +83,6 @@
             border-radius: 2px;
         }
 
-        /* Canvas cursor style */
         .cfd-canvas {
             cursor: crosshair;
             touch-action: none;
@@ -107,26 +106,33 @@
             const [vorticityBoost, setVorticityBoost] = React.useState(2.5);
             const [solverIters, setSolverIters] = React.useState(24);
             const [dyeFade, setDyeFade] = React.useState(0.992);
-            const [resolution, setResolution] = React.useState(160); /* Grid width */
+            const [resolution, setResolution] = React.useState(180); /* Grid width */
 
             const [isPaused, setIsPaused] = React.useState(false);
             const [fps, setFps] = React.useState(60);
 
-            const canvasRef = React.useRef(null);
+            const displayCanvasRef = React.useRef(null);
             const simRef = React.useRef(null);
             const animFrameRef = React.useRef(null);
 
             React.useEffect(() => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
+                const displayCanvas = displayCanvasRef.current;
+                if (!displayCanvas) return;
 
                 const W = resolution;
-                const H = Math.floor(resolution * 0.5); /* 2:1 aspect ratio */
-                canvas.width = W;
-                canvas.height = H;
+                const H = Math.floor(resolution * 0.5); /* 2:1 aspect ratio grid */
 
-                const ctx = canvas.getContext('2d');
-                const imgData = ctx.createImageData(W, H);
+                /* Create smooth offscreen grid computation canvas */
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = W;
+                offCanvas.height = H;
+                const offCtx = offCanvas.getContext('2d');
+                const imgData = offCtx.createImageData(W, H);
+
+                /* Set up high-res presentation canvas dimensions */
+                const displayCtx = displayCanvas.getContext('2d');
+                displayCanvas.width = 960;
+                displayCanvas.height = 480;
 
                 /* Fluid State Grids */
                 const size = W * H;
@@ -137,7 +143,7 @@
                 const p = new Float32Array(size);
                 const div = new Float32Array(size);
                 
-                /* Dye RGB Grids for vibrant rainbow streamlines */
+                /* Dye RGB Grids for vibrant streamlines */
                 const dyeR = new Float32Array(size);
                 const dyeG = new Float32Array(size);
                 const dyeB = new Float32Array(size);
@@ -185,11 +191,10 @@
                                 }
                             }
                             else if (obstacleType === 'airfoil') {
-                                /* NACA 0012 / 2412 Airfoil Profile approximation */
+                                /* NACA Airfoil Profile approximation */
                                 const chord = obstacleSize * 2.8;
                                 const xc = (rx + chord * 0.3) / chord;
                                 if (xc >= 0 && xc <= 1) {
-                                    /* Thickness distribution */
                                     const yt = 5 * 0.12 * (
                                         0.2969 * Math.sqrt(xc) - 
                                         0.1260 * xc - 
@@ -224,7 +229,7 @@
 
                 updateObstacle();
 
-                /* Semi-Lagrangian Advection Step */
+                /* Bilinear Semi-Lagrangian Advection Step */
                 const advect = (field, field0, dt) => {
                     for (let y = 1; y < H - 1; y++) {
                         for (let x = 1; x < W - 1; x++) {
@@ -258,7 +263,6 @@
 
                 /* Pressure Poisson Solver (Incompressibility Projection) */
                 const project = () => {
-                    /* Compute Divergence */
                     for (let y = 1; y < H - 1; y++) {
                         for (let x = 1; x < W - 1; x++) {
                             const idx = IX(x, y);
@@ -272,7 +276,6 @@
                         }
                     }
 
-                    /* Jacobi Iterations */
                     for (let k = 0; k < solverIters; k++) {
                         for (let y = 1; y < H - 1; y++) {
                             for (let x = 1; x < W - 1; x++) {
@@ -284,7 +287,6 @@
                         }
                     }
 
-                    /* Subtract Pressure Gradient */
                     for (let y = 1; y < H - 1; y++) {
                         for (let x = 1; x < W - 1; x++) {
                             const idx = IX(x, y);
@@ -300,7 +302,7 @@
                     }
                 };
 
-                /* Vorticity Confinement (Preserves crisp shear layer swirls) */
+                /* Vorticity Confinement */
                 const applyVorticity = () => {
                     if (vorticityBoost <= 0) return;
 
@@ -324,22 +326,18 @@
                             const nx = dw_dx / len;
                             const ny = dw_dy / len;
 
-                            u[idx] += nx * curl[idx] * vorticityBoost * 0.02;
-                            v[idx] += ny * curl[idx] * vorticityBoost * 0.02;
+                            u[idx] += nx * curl[idx] * vorticityBoost * 0.018;
+                            v[idx] += ny * curl[idx] * vorticityBoost * 0.018;
                         }
                     }
                 };
 
-                /* Inflow Boundaries & Multi-color Rainbow Dye Injectors */
+                /* Inflow Boundaries & Dye Injectors */
                 const applyInflow = () => {
-                    const dt = 1.0;
-                    
-                    /* Streamline Dye Injection Lines */
-                    const numLines = 16;
+                    const numLines = 18;
                     const lineSpacing = H / (numLines + 1);
 
                     for (let y = 0; y < H; y++) {
-                        /* Wind Tunnel boundary or Open Flow */
                         const isBoundaryWall = (scene === 'windTunnel') && (y === 0 || y === H - 1);
                         
                         for (let x = 0; x < 3; x++) {
@@ -353,13 +351,11 @@
                             }
                         }
 
-                        /* Inject vibrant multi-color dye stripes at left inflow wall */
                         const lineIdx = Math.floor(y / lineSpacing);
                         const distToLine = Math.abs(y - (lineIdx * lineSpacing + lineSpacing/2));
 
-                        if (distToLine < 1.4) {
-                            /* Map Y index to rainbow spectrum */
-                            const hue = (lineIdx / numLines) * 300; /* Red to Purple */
+                        if (distToLine < 1.3) {
+                            const hue = (lineIdx / numLines) * 320;
                             const rgb = hslToRgb(hue / 360, 0.95, 0.6);
 
                             for (let x = 1; x < 4; x++) {
@@ -372,7 +368,6 @@
                     }
                 };
 
-                /* Helper: HSL to RGB conversion */
                 function hslToRgb(h, s, l) {
                     let r, g, b;
                     if (s === 0) {
@@ -404,23 +399,20 @@
                             const pix = idx * 4;
 
                             if (obstacle[idx]) {
-                                /* Dark Metallic Obstacle Rendering */
-                                data[pix] = 15;
-                                data[pix + 1] = 23;
-                                data[pix + 2] = 42;
+                                data[pix] = 12;
+                                data[pix + 1] = 18;
+                                data[pix + 2] = 32;
                                 data[pix + 3] = 255;
                                 continue;
                             }
 
                             if (visMode === 'dye') {
-                                /* Multi-colored Dye Streamlines */
                                 data[pix] = Math.min(255, dyeR[idx]);
                                 data[pix + 1] = Math.min(255, dyeG[idx]);
                                 data[pix + 2] = Math.min(255, dyeB[idx]);
                                 data[pix + 3] = 255;
                             }
                             else if (visMode === 'speed') {
-                                /* Thermal Velocity Magnitude Colormap */
                                 const spd = Math.sqrt(u[idx] * u[idx] + v[idx] * v[idx]) / (inflowSpeed * 2.2 + 0.1);
                                 const norm = Math.min(1.0, spd);
 
@@ -430,24 +422,22 @@
                                 data[pix + 3] = 255;
                             }
                             else if (visMode === 'curl') {
-                                /* Vorticity (Curl) Colormap: Red = Clockwise, Blue = Counter-clockwise */
                                 const curlVal = (v[IX(Math.min(W-1, x + 1), y)] - v[IX(Math.max(0, x - 1), y)]) - 
                                                 (u[IX(x, Math.min(H-1, y + 1))] - u[IX(x, Math.max(0, y - 1))]);
                                 const val = Math.max(-1, Math.min(1, curlVal * 1.5));
 
                                 if (val > 0) {
                                     data[pix] = Math.floor(val * 255);
-                                    data[pix + 1] = Math.floor(val * 60);
-                                    data[pix + 2] = 40;
+                                    data[pix + 1] = Math.floor(val * 70);
+                                    data[pix + 2] = 30;
                                 } else {
-                                    data[pix] = 30;
-                                    data[pix + 1] = Math.floor(-val * 160);
+                                    data[pix] = 20;
+                                    data[pix + 1] = Math.floor(-val * 170);
                                     data[pix + 2] = Math.floor(-val * 255);
                                 }
                                 data[pix + 3] = 255;
                             }
                             else if (visMode === 'pressure') {
-                                /* Pressure Field Colormap: Red = High Stagnation, Blue = Low Suction */
                                 const prs = p[idx] * 4.0;
                                 const normP = Math.max(-1, Math.min(1, prs));
 
@@ -465,15 +455,20 @@
                         }
                     }
 
-                    ctx.putImageData(imgData, 0, 0);
+                    /* Write to offscreen low-res grid canvas */
+                    offCtx.putImageData(imgData, 0, 0);
 
-                    /* Render Obstacle Highlight Outline */
-                    ctx.strokeStyle = '#38bdf8';
-                    ctx.lineWidth = 1;
-                    ctx.strokeRect(0, 0, W, H);
+                    /* Smooth upscale draw onto presentation canvas with bilinear filter */
+                    displayCtx.imageSmoothingEnabled = true;
+                    displayCtx.imageSmoothingQuality = 'high';
+                    displayCtx.drawImage(offCanvas, 0, 0, displayCanvas.width, displayCanvas.height);
+
+                    /* Render Border Outline */
+                    displayCtx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+                    displayCtx.lineWidth = 2;
+                    displayCtx.strokeRect(0, 0, displayCanvas.width, displayCanvas.height);
                 };
 
-                /* Simulation Step Frame Loop */
                 let lastTime = performance.now();
                 let frameCount = 0;
 
@@ -481,7 +476,6 @@
                     if (!isPaused) {
                         applyInflow();
 
-                        /* Advection */
                         u0.set(u); v0.set(v);
                         advect(u, u0, 1.0);
                         advect(v, v0, 1.0);
@@ -489,13 +483,11 @@
                         applyVorticity();
                         project();
 
-                        /* Dye Advection & Fade */
                         dyeR0.set(dyeR); dyeG0.set(dyeG); dyeB0.set(dyeB);
                         advect(dyeR, dyeR0, 1.0);
                         advect(dyeG, dyeG0, 1.0);
                         advect(dyeB, dyeB0, 1.0);
 
-                        /* Dye dissipation */
                         for (let i = 0; i < size; i++) {
                             dyeR[i] *= dyeFade;
                             dyeG[i] *= dyeFade;
@@ -505,7 +497,6 @@
                         render();
                     }
 
-                    /* FPS Counter */
                     frameCount++;
                     const now = performance.now();
                     if (now - lastTime >= 1000) {
@@ -525,18 +516,17 @@
                         dyeR.fill(0); dyeG.fill(0); dyeB.fill(0);
                     },
                     stir: (cx, cy, radius, forceX, forceY) => {
-                        const gx = Math.floor((cx / canvas.clientWidth) * W);
-                        const gy = Math.floor((cy / canvas.clientHeight) * H);
+                        const gx = Math.floor((cx / displayCanvas.clientWidth) * W);
+                        const gy = Math.floor((cy / displayCanvas.clientHeight) * H);
                         const rGrid = Math.floor(radius);
 
                         for (let y = gy - rGrid; y <= gy + rGrid; y++) {
                             for (let x = gx - rGrid; x <= gx + rGrid; x++) {
                                 if (x >= 0 && x < W && y >= 0 && y < H) {
                                     const idx = IX(x, y);
-                                    u[idx] += forceX * 0.15;
-                                    v[idx] += forceY * 0.15;
+                                    u[idx] += forceX * 0.18;
+                                    v[idx] += forceY * 0.18;
 
-                                    /* Add white dye burst on touch */
                                     dyeR[idx] = 255;
                                     dyeG[idx] = 255;
                                     dyeB[idx] = 255;
@@ -551,10 +541,9 @@
                 };
             }, [scene, visMode, obstacleType, obstacleSize, aoa, inflowSpeed, vorticityBoost, solverIters, dyeFade, resolution, isPaused]);
 
-            /* Interactive Canvas Dragting/Stirring Listener */
             const handleCanvasPointer = (e) => {
-                if (!canvasRef.current || !simRef.current) return;
-                const rect = canvasRef.current.getBoundingClientRect();
+                if (!displayCanvasRef.current || !simRef.current) return;
+                const rect = displayCanvasRef.current.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
 
@@ -570,7 +559,7 @@
                         <div className="bg-slate-900/80 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
                             <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
                                 <h4 className="font-bold text-sky-400 text-lg flex items-center gap-2">
-                                    <span>🌊 Real-Time Navier-Stokes CFD</span>
+                                    <span>🌊 Navier-Stokes Fluid Solver</span>
                                 </h4>
                                 <span className="text-xs font-mono bg-sky-950 text-sky-300 border border-sky-800 px-2 py-0.5 rounded-full">
                                     {fps} FPS
@@ -616,7 +605,7 @@
                                 </select>
                             </div>
 
-                            {/* Interactive Sliders */}
+                            {/* Sliders */}
                             <div className="space-y-3 pt-2">
                                 <label className="flex flex-col text-xs font-semibold text-slate-300">
                                     <span className="flex justify-between">
@@ -674,19 +663,19 @@
                     </div>
 
                     {/* Canvas Viewport */}
-                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-2 shadow-2xl relative overflow-hidden min-h-[380px]">
-                        <div className="absolute top-3 left-4 text-xs font-mono bg-slate-900/90 text-sky-300 px-3 py-1 rounded-full border border-slate-700/80 z-10 pointer-events-none">
+                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-3 shadow-2xl relative overflow-hidden min-h-[380px]">
+                        <div className="absolute top-4 left-5 text-xs font-mono bg-slate-900/90 text-sky-300 px-3 py-1 rounded-full border border-slate-700 z-10 pointer-events-none shadow-md">
                             Interactive Canvas • Click & Drag to Stir Fluid
                         </div>
 
-                        <canvas ref={canvasRef} 
+                        <canvas ref={displayCanvasRef} 
                                 onPointerDown={handleCanvasPointer} 
                                 onPointerMove={handleCanvasPointer}
-                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800 shadow-inner bg-black image-rendering-pixelated" />
+                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800 shadow-inner bg-black" />
 
                         <div className="w-full flex justify-between items-center px-3 py-2 text-xs text-slate-400 font-mono">
-                            <span>Visualization: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
-                            <span>Solver: <strong className="text-emerald-400">Navier-Stokes (GPU/CPU Grid)</strong></span>
+                            <span>Visualization Mode: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
+                            <span>Engine: <strong className="text-emerald-400">Navier-Stokes (Dual-Canvas GPU/CPU Grid)</strong></span>
                         </div>
                     </div>
                 </div>
@@ -694,14 +683,14 @@
         };
 
         const RocketEngineSizer = () => {
-            /* States */
+            /* Control States */
             const [thrust, setThrust] = React.useState(35); /* kN */
-            const [pc, setPc] = React.useState(4.0); /* MPa (~580 psi) */
-            const [pa, setPa] = React.useState(101.3); /* kPa (Sea level) */
+            const [pc, setPc] = React.useState(4.0); /* MPa */
+            const [pa, setPa] = React.useState(101.3); /* kPa */
             const [propellant, setPropellant] = React.useState('N2O/Ethanol');
             const [contractionRatio, setContractionRatio] = React.useState(3.5); /* Ac / At */
 
-            /* Propellant Database */
+            /* Propellant Data */
             const propData = {
                 'N2O/Ethanol':   { gamma: 1.23, mw: 25.2, Tc: 3050, Lstar: 1.25, name: "N₂O / Ethanol (Nitrous Biprop)" },
                 'N2O/Isopropyl': { gamma: 1.22, mw: 26.1, Tc: 2980, Lstar: 1.20, name: "N₂O / Isopropyl Alcohol (IPA)" },
@@ -713,7 +702,7 @@
             const g0 = 9.80665;
             const Ru = 8314.46;
 
-            /* Calculations */
+            /* Engine Calculations */
             const calculateEngine = () => {
                 const data = propData[propellant];
                 const y = data.gamma;
@@ -728,12 +717,12 @@
                 const pressureRatio = Pc_Pa / Pa_Pa;
 
                 /* Exit Mach Number (Me) */
-                const term1 = Math.pow(pressureRatio, (y - 1) / y) - 1;
+                const term1 = Math.max(0, Math.pow(pressureRatio, (y - 1) / y) - 1);
                 const Me = Math.sqrt((2 / (y - 1)) * term1);
 
                 /* Expansion Ratio (epsilon = Ae / At) */
                 const term2 = (2 + (y - 1) * Math.pow(Me, 2)) / (y + 1);
-                const epsilon = (1 / Me) * Math.pow(term2, (y + 1) / (2 * (y - 1)));
+                const epsilon = Math.max(1.0, (1 / (Me || 1)) * Math.pow(term2, (y + 1) / (2 * (y - 1))));
 
                 /* Thrust Coefficient (Cf) */
                 const Cf = Math.sqrt(
@@ -769,7 +758,7 @@
                 
                 const V_cyl = Math.max(Vc - V_conv, 0.15 * Vc);
                 const L_cyl = V_cyl / Ac;
-                const tau_r = (data.Lstar / cStar) * 1000; /* milliseconds */
+                const tau_r = (data.Lstar / cStar) * 1000;
 
                 return { 
                     Me, epsilon, Cf, cStar, Isp, At, Ae, Dt, De, mDot, 
@@ -779,6 +768,7 @@
 
             const results = calculateEngine();
 
+            /* Robust SVG Geometry Construction (Continuous Single Loop Path) */
             const renderNozzleSVG = () => {
                 if (!results) return null;
 
@@ -786,63 +776,60 @@
                 const height = 320;
                 const centerY = height / 2;
                 
-                const maxDim = Math.max(results.De, results.Dc, 0.3);
-                const scale = (height * 0.7) / maxDim;
+                const maxDim = Math.max(results.De, results.Dc, 0.25);
+                const scale = (height * 0.65) / maxDim;
                 
                 const r_c = (results.Dc / 2) * scale;
                 const r_t = (results.Dt / 2) * scale;
                 const r_e = (results.De / 2) * scale;
                 
                 const x_inj = 40;
-                const x_cyl_end = x_inj + Math.min(Math.max(results.L_cyl * scale * 3, 90), 180);
-                const x_throat = x_cyl_end + Math.min(Math.max(results.L_conv * scale * 3, 50), 100);
-                const x_exit = Math.min(x_throat + 220, width - 40);
+                const x_cyl_end = x_inj + Math.min(Math.max(results.L_cyl * scale * 2.5, 80), 160);
+                const x_throat = x_cyl_end + Math.min(Math.max(results.L_conv * scale * 2.5, 45), 90);
+                const x_exit = Math.min(x_throat + 210, width - 40);
 
-                const topContour = `
-                    M ${x_inj}, ${centerY - r_c}
-                    L ${x_cyl_end}, ${centerY - r_c}
-                    L ${x_throat}, ${centerY - r_t}
-                    C ${x_throat + 40}, ${centerY - r_t} ${x_exit - 80}, ${centerY - r_e} ${x_exit}, ${centerY - r_e}
-                `;
-                
-                const bottomContour = `
-                    M ${x_inj}, ${centerY + r_c}
-                    L ${x_cyl_end}, ${centerY + r_c}
-                    L ${x_throat}, ${centerY + r_t}
-                    C ${x_throat + 40}, ${centerY + r_t} ${x_exit - 80}, ${centerY + r_e} ${x_exit}, ${centerY + r_e}
-                `;
+                /* Form smooth continuous outer boundary loop string */
+                const topContour = `L ${x_cyl_end},${centerY - r_c} L ${x_throat},${centerY - r_t} C ${x_throat + 40},${centerY - r_t} ${x_exit - 60},${centerY - r_e} ${x_exit},${centerY - r_e}`;
+                const bottomContour = `L ${x_exit},${centerY + r_e} C ${x_exit - 60},${centerY + r_e} ${x_throat + 40},${centerY + r_t} ${x_throat},${centerY + r_t} L ${x_cyl_end},${centerY + r_c} L ${x_inj},${centerY + r_c}`;
+
+                /* Clean closed flame path */
+                const flameD = `M ${x_inj},${centerY - r_c} ${topContour} ${bottomContour} Z`;
+
+                /* Separate lines for wall stroke rendering */
+                const strokeTop = `M ${x_inj},${centerY - r_c} ${topContour}`;
+                const strokeBottom = `M ${x_inj},${centerY + r_c} L ${x_cyl_end},${centerY + r_c} L ${x_throat},${centerY + r_t} C ${x_throat + 40},${centerY + r_t} ${x_exit - 60},${centerY + r_e} ${x_exit},${centerY + r_e}`;
 
                 return (
                     <svg className="w-full h-full drop-shadow-2xl" viewBox={`0 0 ${width} ${height}`}>
                         <defs>
                             <linearGradient id="chamberFlame" x1="0%" y1="0%" x2="100%" y2="0%">
                                 <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
-                                <stop offset="50%" stopColor="#f97316" stopOpacity="0.9" />
-                                <stop offset="85%" stopColor="#eab308" stopOpacity="0.95" />
+                                <stop offset="45%" stopColor="#f97316" stopOpacity="0.9" />
+                                <stop offset="75%" stopColor="#eab308" stopOpacity="0.95" />
                                 <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.85" />
                             </linearGradient>
                             <linearGradient id="plumeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
                                 <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.85" />
-                                <stop offset="40%" stopColor="#818cf8" stopOpacity="0.5" />
+                                <stop offset="50%" stopColor="#818cf8" stopOpacity="0.45" />
                                 <stop offset="100%" stopColor="#c084fc" stopOpacity="0.0" />
                             </linearGradient>
                         </defs>
 
-                        {/* Flow Flame Contour */}
-                        <path d={`${topContour} L ${x_exit},${centerY+r_e} M ${x_inj},${centerY+r_c} ${bottomContour} Z`} fill="url(#chamberFlame)" />
+                        {/* Solid Interior Chamber & Nozzle Flame Field */}
+                        <path d={flameD} fill="url(#chamberFlame)" />
                         
                         {/* Exhaust Plume */}
-                        <path d={`M ${x_exit},${centerY-r_e} Q ${x_exit+80},${centerY} ${x_exit},${centerY+r_e} Z`} fill="url(#plumeGrad)" />
+                        <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 80},${centerY} ${x_exit},${centerY + r_e} Z`} fill="url(#plumeGrad)" />
 
-                        {/* Wall Shells */}
-                        <path d={topContour} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
-                        <path d={bottomContour} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
+                        {/* Wall Shell Lines */}
+                        <path d={strokeTop} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
+                        <path d={strokeBottom} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" />
 
                         {/* Injector Plate Header */}
-                        <rect x={x_inj - 12} y={centerY - r_c - 10} width="12" height={r_c * 2 + 20} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" />
+                        <rect x={x_inj - 12} y={centerY - r_c - 8} width="12" height={r_c * 2 + 16} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" />
                         
                         {/* Dimension Annotations */}
-                        <text x={x_inj + 15} y={centerY - 10} className="text-xs fill-amber-300 font-mono font-bold">Dc: {(results.Dc * 100).toFixed(1)} cm</text>
+                        <text x={x_inj + 15} y={centerY - 8} className="text-xs fill-amber-300 font-mono font-bold">Dc: {(results.Dc * 100).toFixed(1)} cm</text>
                         <text x={x_throat} y={centerY - r_t - 10} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {(results.Dt * 100).toFixed(1)} cm</text>
                         <text x={x_exit} y={centerY - r_e - 10} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {(results.De * 100).toFixed(1)} cm</text>
                     </svg>
@@ -892,7 +879,7 @@
                             </label>
                         </div>
 
-                        {/* Performance Metric Output */}
+                        {/* Combustion Results */}
                         <div className="bg-slate-900/90 text-white p-5 rounded-2xl border border-slate-700 shadow-xl flex-grow">
                             <h4 className="font-bold text-amber-300 border-b border-slate-700/80 pb-2 mb-3 text-sm">Combustion Results</h4>
                             {!results ? (
@@ -924,9 +911,9 @@
                         </div>
                     </div>
 
-                    {/* Geometry Schematic Display */}
+                    {/* Geometry Display */}
                     <div className="w-full lg:w-2/3 min-h-[340px] bg-slate-950 rounded-2xl border-2 border-slate-800 flex flex-col items-center justify-center p-4 shadow-2xl relative overflow-hidden">
-                        <div className="absolute top-4 left-4 text-xs font-mono bg-slate-900/90 text-amber-300 px-3 py-1 rounded-full border border-slate-700">
+                        <div className="absolute top-4 left-4 text-xs font-mono bg-slate-900/90 text-amber-300 px-3 py-1 rounded-full border border-slate-700 shadow-md">
                             Geometry Schematic • {propData[propellant].name}
                         </div>
                         {renderNozzleSVG()}
@@ -1001,7 +988,7 @@
                             </p>
                         </div>
 
-                        {/* Brower-Tech Replicated CFD Simulator */}
+                        {/* Replicated CFD Simulator */}
                         <SimulationCard
                             title="Interactive CFD Fluid Simulator (Navier-Stokes Grid Solver)"
                             description="Replicated from real-time GPU/CPU fluid visualizers. Solves 2D incompressible Navier-Stokes equations with multi-colored dye injection, vorticity confinement, and pressure projection around custom obstacles."

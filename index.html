@@ -23,10 +23,11 @@
             font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
-            background: linear-gradient(-45deg, #070a12, #0f172a, #13122c, #070a12);
+            /* Woodlands Vibe: Soft tan and pastel green gradients */
+            background: linear-gradient(-45deg, #e8ede3, #d6dccc, #e6dec9, #d0d6c4);
             background-size: 400% 400%;
-            animation: gradientBG 22s ease infinite;
-            color: #f8fafc;
+            animation: gradientBG 25s ease infinite;
+            color: #2d3628;
             min-height: 100vh;
             overflow-x: hidden;
         }
@@ -37,25 +38,25 @@
             100% { background-position: 0% 50%; }
         }
 
-        /* Glassmorphism Panels */
+        /* Light Glassmorphism Panels */
         .glass-panel {
-            background: rgba(15, 23, 42, 0.85);
+            background: rgba(250, 249, 246, 0.6);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.05);
         }
         
         .glass-card {
-            background: rgba(15, 23, 42, 0.80);
+            background: rgba(250, 249, 246, 0.75);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            box-shadow: 0 14px 40px 0 rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 14px 40px 0 rgba(74, 93, 60, 0.08);
             border-radius: 1.5rem;
         }
 
-        /* Custom Range Slider */
+        /* Custom Range Slider - Earthy Tones */
         input[type=range] {
             -webkit-appearance: none;
             width: 100%;
@@ -66,10 +67,10 @@
             height: 16px;
             width: 16px;
             border-radius: 50%;
-            background: #38bdf8;
+            background: #6b7a57; /* Sage green */
             cursor: pointer;
             margin-top: -6px;
-            box-shadow: 0 0 12px rgba(56, 189, 248, 0.9);
+            box-shadow: 0 0 10px rgba(107, 122, 87, 0.4);
             transition: transform 0.1s;
         }
         input[type=range]::-webkit-slider-thumb:hover {
@@ -79,13 +80,31 @@
             width: 100%;
             height: 4px;
             cursor: pointer;
-            background: rgba(56, 189, 248, 0.25);
+            background: rgba(107, 122, 87, 0.25);
             border-radius: 2px;
         }
 
         .cfd-canvas {
             cursor: crosshair;
             touch-action: none;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        /* Custom scrollbar for a polished look */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e6dec9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #8a9a7a;
+            border-radius: 5px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7a57;
         }
     </style>
 </head>
@@ -93,605 +112,749 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const CFDSimulator = ({ customRocket, selectedObstacle, setSelectedObstacle }) => {
-            /* Control States */
-            const [scene, setScene] = React.useState('windTunnel'); /* 'windTunnel', 'supersonic', 'openFlow' */
-            const [visMode, setVisMode] = React.useState('particles'); /* 'particles', 'schlieren', 'speed', 'vorticity', 'pressure' */
+        // ---------------------------------------------------------
+        // WebGL2 GPGPU CFD Simulator Component
+        // ---------------------------------------------------------
+        const WebGLCFDSimulator = ({ customRocket, selectedObstacle, setSelectedObstacle }) => {
+            const canvasRef = React.useRef(null);
+            const containerRef = React.useRef(null);
+            
+            // UI State
+            const [scene, setScene] = React.useState('windTunnel');
+            const [visMode, setVisMode] = React.useState('particles');
             const obstacleType = selectedObstacle;
             const setObstacleType = setSelectedObstacle;
             
-            /* Flow & Solver Sliders */
-            const [obstacleSize, setObstacleSize] = React.useState(26);
-            const [aoa, setAoA] = React.useState(10); /* degrees */
+            // Physics State
             const [inflowSpeed, setInflowSpeed] = React.useState(2.2);
             const [vorticityBoost, setVorticityBoost] = React.useState(3.0);
-            const [particleCount, setParticleCount] = React.useState(3500);
-            const [solverIters, setSolverIters] = React.useState(28);
-
+            const [solverIters, setSolverIters] = React.useState(30);
+            const [dyeRadius, setDyeRadius] = React.useState(0.015);
+            
             const [isPaused, setIsPaused] = React.useState(false);
             const [fps, setFps] = React.useState(60);
+            const [webglSupported, setWebglSupported] = React.useState(true);
 
-            const displayCanvasRef = React.useRef(null);
-            const simRef = React.useRef(null);
+            // Refs for WebGL context and simulation state
+            const glRef = React.useRef(null);
+            const extRef = React.useRef(null);
+            const simStateRef = React.useRef(null);
             const animFrameRef = React.useRef(null);
+            const pointerRef = React.useRef({ x: 0, y: 0, dx: 0, dy: 0, isDown: false, moved: false });
 
-            React.useEffect(() => {
-                const canvas = displayCanvasRef.current;
-                if (!canvas) return;
+            // ---------------------------------------------------------
+            // GLSL Shaders
+            // ---------------------------------------------------------
+            
+            // A simple vertex shader used for rendering a full-screen quad
+            const baseVertexShader = `
+                precision highp float;
+                attribute vec2 aPosition;
+                varying vec2 vUv;
+                varying vec2 vL;
+                varying vec2 vR;
+                varying vec2 vT;
+                varying vec2 vB;
+                uniform vec2 texelSize;
 
-                /* High DPI Canvas Setup */
-                const rect = canvas.getBoundingClientRect();
-                const dpr = Math.min(window.devicePixelRatio || 1, 2);
-                const displayW = Math.floor(rect.width || 900);
-                const displayH = Math.floor(displayW * 0.5);
+                void main () {
+                    vUv = aPosition * 0.5 + 0.5;
+                    vL = vUv - vec2(texelSize.x, 0.0);
+                    vR = vUv + vec2(texelSize.x, 0.0);
+                    vT = vUv + vec2(0.0, texelSize.y);
+                    vB = vUv - vec2(0.0, texelSize.y);
+                    gl_Position = vec4(aPosition, 0.0, 1.0);
+                }
+            `;
 
-                canvas.width = displayW * dpr;
-                canvas.height = displayH * dpr;
-                const ctx = canvas.getContext('2d');
-                ctx.scale(dpr, dpr);
+            // Renders the color/dye to the screen based on the visualization mode
+            const displayShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying vec2 vUv;
+                varying vec2 vL;
+                varying vec2 vR;
+                varying vec2 vT;
+                varying vec2 vB;
+                uniform sampler2D uTexture;
+                uniform sampler2D uVelocity;
+                uniform sampler2D uObstacle;
+                uniform int uVisMode;
+                uniform float uInflowSpeed;
 
-                /* Simulation Grid Dimensions */
-                const GW = 160;
-                const GH = 80;
-                const gridTotal = GW * GH;
+                void main () {
+                    float obs = texture2D(uObstacle, vUv).x;
+                    if (obs > 0.5) {
+                        // Color for solid obstacles
+                        gl_FragColor = vec4(0.17, 0.20, 0.15, 1.0); // #2c3328
+                        return;
+                    }
 
-                /* Fluid Dynamics State Grids */
-                const u = new Float32Array(gridTotal);
-                const v = new Float32Array(gridTotal);
-                const u0 = new Float32Array(gridTotal);
-                const v0 = new Float32Array(gridTotal);
-                const p = new Float32Array(gridTotal);
-                const div = new Float32Array(gridTotal);
-                const curl = new Float32Array(gridTotal);
-                const obstacle = new Uint8Array(gridTotal);
+                    if (uVisMode == 0) { // Particles/Dye
+                        vec3 c = texture2D(uTexture, vUv).rgb;
+                        gl_FragColor = vec4(c, 1.0);
+                    } else if (uVisMode == 1) { // Speed
+                        vec2 v = texture2D(uVelocity, vUv).xy;
+                        float speed = length(v);
+                        float normSpeed = clamp(speed / (uInflowSpeed * 3.0), 0.0, 1.0);
+                        
+                        // Map speed to a colormap (Blue -> Cyan -> Green -> Yellow -> Red)
+                        vec3 color = vec3(0.0);
+                        if (normSpeed < 0.25) color = mix(vec3(0,0,1), vec3(0,1,1), normSpeed/0.25);
+                        else if (normSpeed < 0.5) color = mix(vec3(0,1,1), vec3(0,1,0), (normSpeed-0.25)/0.25);
+                        else if (normSpeed < 0.75) color = mix(vec3(0,1,0), vec3(1,1,0), (normSpeed-0.5)/0.25);
+                        else color = mix(vec3(1,1,0), vec3(1,0,0), (normSpeed-0.75)/0.25);
+                        
+                        gl_FragColor = vec4(color, 1.0);
+                    } else if (uVisMode == 2) { // Pressure (using texture as pressure map here temporarily if needed)
+                        float p = texture2D(uTexture, vUv).x;
+                        if (p > 0.0) {
+                            gl_FragColor = vec4(p*5.0, 0.0, 0.0, 1.0);
+                        } else {
+                            gl_FragColor = vec4(0.0, 0.0, -p*5.0, 1.0);
+                        }
+                    } else {
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    }
+                }
+            `;
 
-                /* Obstacle Position on Simulation Grid */
-                const obsX = Math.floor(GW * 0.30);
-                const obsY = Math.floor(GH * 0.50);
+            const advectionShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying vec2 vUv;
+                uniform sampler2D uVelocity;
+                uniform sampler2D uSource;
+                uniform vec2 texelSize;
+                uniform vec2 dyeTexelSize;
+                uniform float dt;
+                uniform float dissipation;
+                uniform sampler2D uObstacle;
 
-                const IX = (x, y) => Math.max(0, Math.min(GW - 1, Math.floor(x))) + Math.max(0, Math.min(GH - 1, Math.floor(y))) * GW;
+                // Bilerp interpolation
+                vec4 bilerp (sampler2D sam, vec2 uv, vec2 tsize) {
+                    vec2 st = uv / tsize - 0.5;
+                    vec2 iuv = floor(st);
+                    vec2 fuv = fract(st);
 
-                /* High-Precision Particle Streamline Engine */
-                let particles = [];
-                const initParticles = () => {
-                    particles = new Array(particleCount);
-                    for (let i = 0; i < particleCount; i++) {
-                        particles[i] = {
-                            x: Math.random() * GW,
-                            y: Math.random() * GH,
-                            age: Math.random() * 120,
-                            life: 60 + Math.random() * 100,
-                            history: [],
-                            hue: (Math.random() * 60 + 180)
+                    vec4 a = texture2D(sam, (iuv + vec2(0.5, 0.5)) * tsize);
+                    vec4 b = texture2D(sam, (iuv + vec2(1.5, 0.5)) * tsize);
+                    vec4 c = texture2D(sam, (iuv + vec2(0.5, 1.5)) * tsize);
+                    vec4 d = texture2D(sam, (iuv + vec2(1.5, 1.5)) * tsize);
+
+                    return mix(mix(a, b, fuv.x), mix(c, d, fuv.x), fuv.y);
+                }
+
+                void main () {
+                    float obs = texture2D(uObstacle, vUv).x;
+                    if (obs > 0.5) {
+                        gl_FragColor = vec4(0.0);
+                        return;
+                    }
+                    vec2 coord = vUv - dt * texture2D(uVelocity, vUv).xy * texelSize;
+                    vec4 result = bilerp(uSource, coord, dyeTexelSize);
+                    float decay = 1.0 + dissipation * dt;
+                    gl_FragColor = result / decay;
+                }
+            `;
+
+            const divergenceShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying highp vec2 vUv;
+                varying highp vec2 vL;
+                varying highp vec2 vR;
+                varying highp vec2 vT;
+                varying highp vec2 vB;
+                uniform sampler2D uVelocity;
+                uniform sampler2D uObstacle;
+
+                void main () {
+                    float L = texture2D(uVelocity, vL).x;
+                    float R = texture2D(uVelocity, vR).x;
+                    float T = texture2D(uVelocity, vT).y;
+                    float B = texture2D(uVelocity, vB).y;
+
+                    // Obstacle boundaries
+                    float obsL = texture2D(uObstacle, vL).x;
+                    float obsR = texture2D(uObstacle, vR).x;
+                    float obsT = texture2D(uObstacle, vT).x;
+                    float obsB = texture2D(uObstacle, vB).x;
+                    
+                    vec2 C = texture2D(uVelocity, vUv).xy;
+                    if (obsL > 0.5) L = -C.x;
+                    if (obsR > 0.5) R = -C.x;
+                    if (obsT > 0.5) T = -C.y;
+                    if (obsB > 0.5) B = -C.y;
+
+                    float div = 0.5 * (R - L + T - B);
+                    gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
+                }
+            `;
+
+            const pressureShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying highp vec2 vUv;
+                varying highp vec2 vL;
+                varying highp vec2 vR;
+                varying highp vec2 vT;
+                varying highp vec2 vB;
+                uniform sampler2D uPressure;
+                uniform sampler2D uDivergence;
+                uniform sampler2D uObstacle;
+
+                void main () {
+                    float L = texture2D(uPressure, vL).x;
+                    float R = texture2D(uPressure, vR).x;
+                    float T = texture2D(uPressure, vT).x;
+                    float B = texture2D(uPressure, vB).x;
+                    float C = texture2D(uPressure, vUv).x;
+                    float divergence = texture2D(uDivergence, vUv).x;
+                    
+                    float obsL = texture2D(uObstacle, vL).x;
+                    float obsR = texture2D(uObstacle, vR).x;
+                    float obsT = texture2D(uObstacle, vT).x;
+                    float obsB = texture2D(uObstacle, vB).x;
+
+                    if (obsL > 0.5) L = C;
+                    if (obsR > 0.5) R = C;
+                    if (obsT > 0.5) T = C;
+                    if (obsB > 0.5) B = C;
+
+                    float pressure = (L + R + B + T - divergence) * 0.25;
+                    gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
+                }
+            `;
+
+            const gradientSubtractShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying highp vec2 vUv;
+                varying highp vec2 vL;
+                varying highp vec2 vR;
+                varying highp vec2 vT;
+                varying highp vec2 vB;
+                uniform sampler2D uPressure;
+                uniform sampler2D uVelocity;
+                uniform sampler2D uObstacle;
+
+                void main () {
+                    float obs = texture2D(uObstacle, vUv).x;
+                    if (obs > 0.5) {
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                        return;
+                    }
+
+                    float L = texture2D(uPressure, vL).x;
+                    float R = texture2D(uPressure, vR).x;
+                    float T = texture2D(uPressure, vT).x;
+                    float B = texture2D(uPressure, vB).x;
+                    float C = texture2D(uPressure, vUv).x;
+                    
+                    float obsL = texture2D(uObstacle, vL).x;
+                    float obsR = texture2D(uObstacle, vR).x;
+                    float obsT = texture2D(uObstacle, vT).x;
+                    float obsB = texture2D(uObstacle, vB).x;
+
+                    if (obsL > 0.5) L = C;
+                    if (obsR > 0.5) R = C;
+                    if (obsT > 0.5) T = C;
+                    if (obsB > 0.5) B = C;
+
+                    vec2 velocity = texture2D(uVelocity, vUv).xy;
+                    velocity.xy -= vec2(R - L, T - B) * 0.5;
+                    gl_FragColor = vec4(velocity, 0.0, 1.0);
+                }
+            `;
+
+            const splatShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying vec2 vUv;
+                uniform sampler2D uTarget;
+                uniform float aspectRatio;
+                uniform vec3 color;
+                uniform vec2 point;
+                uniform float radius;
+
+                void main () {
+                    vec2 p = vUv - point.xy;
+                    p.x *= aspectRatio;
+                    // Gaussian splat
+                    vec3 splat = exp(-dot(p, p) / radius) * color;
+                    vec3 base = texture2D(uTarget, vUv).xyz;
+                    gl_FragColor = vec4(base + splat, 1.0);
+                }
+            `;
+            
+            const inflowShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying vec2 vUv;
+                uniform sampler2D uTarget;
+                uniform float uSpeed;
+                uniform int uType; // 0 for velocity, 1 for dye
+
+                void main () {
+                    vec4 base = texture2D(uTarget, vUv);
+                    
+                    // Simple constant inflow from the left edge
+                    if (vUv.x < 0.02) {
+                        if (uType == 0) { // Add horizontal velocity
+                            base.x = uSpeed;
+                            base.y += sin(vUv.y * 20.0) * 0.1; // Small perturbation
+                        } else { // Add dye (smoke)
+                            // Colorful smoke bands
+                            float r = sin(vUv.y * 30.0) * 0.5 + 0.5;
+                            float g = sin(vUv.y * 30.0 + 2.0) * 0.5 + 0.5;
+                            float b = sin(vUv.y * 30.0 + 4.0) * 0.5 + 0.5;
+                            // Make it a bit more "earthy" to fit theme
+                            r = mix(r, 0.4, 0.3);
+                            g = mix(g, 0.6, 0.3);
+                            b = mix(b, 0.3, 0.3);
+                            base = vec4(r, g, b, 1.0);
+                        }
+                    }
+                    gl_FragColor = base;
+                }
+            `;
+            
+            // Generates obstacles procedurally on the GPU
+            const generateObstacleShaderSource = `
+                precision highp float;
+                varying vec2 vUv;
+                uniform float uAspect;
+                uniform int uType; 
+                // 0: None, 1: Cylinder, 2: Plate, 3: Airfoil, 4: Nozzle
+                
+                void main() {
+                    float isObs = 0.0;
+                    vec2 p = vUv - vec2(0.3, 0.5); // Center offset
+                    p.x *= uAspect;
+
+                    if (uType == 1) { // Cylinder
+                        if (length(p) < 0.08) isObs = 1.0;
+                    } 
+                    else if (uType == 2) { // Flat Plate
+                        if (abs(p.x) < 0.01 && abs(p.y) < 0.2) isObs = 1.0;
+                    }
+                    else if (uType == 3) { // Airfoil (Simplified NACA)
+                        float chord = 0.3;
+                        vec2 ap = p + vec2(chord*0.4, 0.0);
+                        float xc = ap.x / chord;
+                        if (xc >= 0.0 && xc <= 1.0) {
+                            float yt = 0.15 * (0.2969 * sqrt(xc) - 0.1260 * xc - 0.3516 * xc*xc + 0.2843 * xc*xc*xc - 0.1015 * xc*xc*xc*xc) * chord;
+                            if (abs(ap.y) <= yt) isObs = 1.0;
+                        }
+                    }
+                    else if (uType == 4) { // Nozzle walls
+                        vec2 np = vUv;
+                        if (np.x > 0.2 && np.x < 0.8) {
+                            float nx = (np.x - 0.2) / 0.6;
+                            float wallY = (nx < 0.35) ? (0.16 + (0.35 - nx) * 0.28) : (0.16 + (nx - 0.35) * 0.38);
+                            if (np.y < wallY || np.y > 1.0 - wallY) isObs = 1.0;
+                        }
+                    }
+                    
+                    // Wind tunnel walls (top and bottom)
+                    if (vUv.y < 0.02 || vUv.y > 0.98) isObs = 1.0;
+
+                    gl_FragColor = vec4(isObs, 0.0, 0.0, 1.0);
+                }
+            `;
+
+
+            // ---------------------------------------------------------
+            // WebGL Utilities
+            // ---------------------------------------------------------
+            const getWebGLContext = (canvas) => {
+                const params = { alpha: true, depth: false, stencil: false, antialias: false, preserveDrawingBuffer: false };
+                let gl = canvas.getContext('webgl2', params);
+                const isWebGL2 = !!gl;
+                if (!isWebGL2) {
+                    gl = canvas.getContext('webgl', params) || canvas.getContext('experimental-webgl', params);
+                }
+                
+                if (gl) {
+                    let ext;
+                    if (isWebGL2) {
+                        gl.getExtension('EXT_color_buffer_float');
+                        ext = {
+                            formatRGBA: { internalFormat: gl.RGBA16F, format: gl.RGBA },
+                            formatRG: { internalFormat: gl.RG16F, format: gl.RG },
+                            formatR: { internalFormat: gl.R16F, format: gl.RED },
+                            halfFloatTexType: gl.HALF_FLOAT
+                        };
+                    } else {
+                        ext = gl.getExtension('OES_texture_half_float');
+                        gl.getExtension('OES_texture_half_float_linear');
+                        ext = {
+                            formatRGBA: { internalFormat: gl.RGBA, format: gl.RGBA },
+                            formatRG: { internalFormat: gl.RGBA, format: gl.RGBA },
+                            formatR: { internalFormat: gl.RGBA, format: gl.RGBA },
+                            halfFloatTexType: ext.HALF_FLOAT_OES
                         };
                     }
-                };
-                initParticles();
+                    return { gl, ext, isWebGL2 };
+                }
+                return null;
+            };
 
-                const updateObstacle = () => {
-                    obstacle.fill(0);
-                    if (obstacleType === 'none') return;
+            const compileShader = (gl, type, source) => {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.trace(gl.getShaderInfoLog(shader));
+                }
+                return shader;
+            };
 
-                    const radAngle = (-aoa * Math.PI) / 180;
-                    const cosA = Math.cos(radAngle);
-                    const sinA = Math.sin(radAngle);
+            const createProgram = (gl, vertexShader, fragmentShader) => {
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    console.trace(gl.getProgramInfoLog(program));
+                }
+                return program;
+            };
 
-                    for (let y = 0; y < GH; y++) {
-                        for (let x = 0; x < GW; x++) {
-                            const dx = x - obsX;
-                            const dy = y - obsY;
+            const getUniforms = (gl, program) => {
+                let uniforms = [];
+                let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+                for (let i = 0; i < uniformCount; i++) {
+                    let uniformName = gl.getActiveUniform(program, i).name;
+                    uniforms[uniformName] = gl.getUniformLocation(program, uniformName);
+                }
+                return uniforms;
+            };
 
-                            /* Transform into obstacle rotated frame */
-                            const rx = dx * cosA - dy * sinA;
-                            const ry = dx * sinA + dy * cosA;
+            class Program {
+                constructor(gl, vertexShader, fragmentShaderSource) {
+                    this.gl = gl;
+                    this.uniforms = {};
+                    this.program = createProgram(gl, vertexShader, compileShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
+                    this.uniforms = getUniforms(gl, this.program);
+                }
+                bind() { this.gl.useProgram(this.program); }
+            }
 
-                            let inside = false;
+            const createTexture = (gl, width, height, internalFormat, format, type, param) => {
+                const texture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, param);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, param);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, null);
+                return texture;
+            };
 
-                            if (obstacleType === 'designedRocket' && customRocket) {
-                                /* Scale custom rocket geometry to CFD grid */
-                                const engineXStart = GW * 0.08;
-                                const scaleR = GH * 0.32 / (customRocket.Dc || 0.1);
-                                
-                                const rC = (customRocket.Dc / 2) * scaleR;
-                                const rT = (customRocket.Dt / 2) * scaleR;
-                                const rE = (customRocket.De / 2) * scaleR;
+            const createFBO = (gl, w, h, internalFormat, format, type, param) => {
+                gl.activeTexture(gl.TEXTURE0);
+                const texture = createTexture(gl, w, h, internalFormat, format, type, param);
+                const fbo = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                gl.viewport(0, 0, w, h);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                return { texture, fbo, width: w, height: h, texelSizeX: 1.0 / w, texelSizeY: 1.0 / h };
+            };
 
-                                const scaleL = (GW * 0.75) / (customRocket.L_cyl + customRocket.L_conv + customRocket.L_div || 0.3);
-                                const lCyl = customRocket.L_cyl * scaleL;
-                                const lConv = customRocket.L_conv * scaleL;
-                                const lDiv = customRocket.L_div * scaleL;
-
-                                const xCylEnd = engineXStart + lCyl;
-                                const xThroat = xCylEnd + lConv;
-                                const xExit = xThroat + lDiv;
-
-                                if (x >= engineXStart && x <= xExit) {
-                                    let currentRadius = rC;
-                                    if (x <= xCylEnd) {
-                                        currentRadius = rC;
-                                    } else if (x <= xThroat) {
-                                        const frac = (x - xCylEnd) / lConv;
-                                        currentRadius = rC - frac * (rC - rT);
-                                    } else {
-                                        const frac = (x - xThroat) / lDiv;
-                                        if (customRocket.shape === 'bell') {
-                                            /* Parabolic contour for bell approximation */
-                                            currentRadius = rT + Math.pow(frac, 0.7) * (rE - rT);
-                                        } else {
-                                            currentRadius = rT + frac * (rE - rT);
-                                        }
-                                    }
-
-                                    const wallDist = Math.abs(y - GH / 2);
-                                    if (wallDist > currentRadius) {
-                                        inside = true;
-                                    }
-                                }
-                            }
-                            else if (obstacleType === 'cylinder') {
-                                if (dx * dx + dy * dy <= (obstacleSize * 0.45) ** 2) inside = true;
-                            } 
-                            else if (obstacleType === 'flatPlate') {
-                                if (Math.abs(rx) <= obstacleSize * 0.8 && Math.abs(ry) <= 2.2) inside = true;
-                            }
-                            else if (obstacleType === 'airfoil') {
-                                const chord = obstacleSize * 2.2;
-                                const xc = (rx + chord * 0.32) / chord;
-                                if (xc >= 0 && xc <= 1) {
-                                    const yt = 5 * 0.15 * (
-                                        0.2969 * Math.sqrt(xc) - 
-                                        0.1260 * xc - 
-                                        0.3516 * Math.pow(xc, 2) + 
-                                        0.2843 * Math.pow(xc, 3) - 
-                                        0.1015 * Math.pow(xc, 4)
-                                    ) * chord;
-                                    if (Math.abs(ry) <= yt) inside = true;
-                                }
-                            }
-                            else if (obstacleType === 'shuttle') {
-                                const length = obstacleSize * 2.5;
-                                const xc = (rx + length * 0.4) / length;
-                                if (xc >= 0 && xc <= 1) {
-                                    const width = Math.sin(xc * Math.PI) * (obstacleSize * 0.45);
-                                    if (Math.abs(ry) <= width) inside = true;
-                                }
-                            }
-                            else if (obstacleType === 'nozzle') {
-                                const nw = GW * 0.55;
-                                if (x >= obsX - nw/2 && x <= obsX + nw/2) {
-                                    const nx = (x - (obsX - nw/2)) / nw;
-                                    let wallY = (nx < 0.35) ? (GH * 0.16 + (0.35 - nx) * GH * 0.28) : (GH * 0.16 + (nx - 0.35) * GH * 0.38);
-                                    if (y < wallY || y > GH - wallY) inside = true;
-                                }
-                            }
-
-                            if (inside) obstacle[IX(x, y)] = 1;
-                        }
+            const createDoubleFBO = (gl, w, h, internalFormat, format, type, param) => {
+                let fbo1 = createFBO(gl, w, h, internalFormat, format, type, param);
+                let fbo2 = createFBO(gl, w, h, internalFormat, format, type, param);
+                return {
+                    width: w, height: h, texelSizeX: fbo1.texelSizeX, texelSizeY: fbo1.texelSizeY,
+                    get read() { return fbo1; },
+                    set read(value) { fbo1 = value; },
+                    get write() { return fbo2; },
+                    set write(value) { fbo2 = value; },
+                    swap() {
+                        let temp = fbo1;
+                        fbo1 = fbo2;
+                        fbo2 = temp;
                     }
                 };
+            };
 
-                updateObstacle();
+            const blit = (gl, target) => {
+                gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, target);
+                gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+            };
 
-                const sampleVelocity = (px, py) => {
-                    const x0 = Math.max(0, Math.min(GW - 2, Math.floor(px)));
-                    const y0 = Math.max(0, Math.min(GH - 2, Math.floor(py)));
-                    const fx = px - x0;
-                    const fy = py - y0;
+            // ---------------------------------------------------------
+            // React Lifecycle & Main Simulation Loop
+            // ---------------------------------------------------------
+            React.useEffect(() => {
+                const canvas = canvasRef.current;
+                const container = containerRef.current;
+                if (!canvas || !container) return;
 
-                    const i00 = IX(x0, y0);
-                    const i10 = IX(x0 + 1, y0);
-                    const i01 = IX(x0, y0 + 1);
-                    const i11 = IX(x0 + 1, y0 + 1);
+                const webglContext = getWebGLContext(canvas);
+                if (!webglContext) {
+                    setWebglSupported(false);
+                    return;
+                }
+                const { gl, ext } = webglContext;
+                glRef.current = gl;
+                extRef.current = ext;
 
-                    const vx = (1 - fx) * ((1 - fy) * u[i00] + fy * u[i01]) + fx * ((1 - fy) * u[i10] + fy * u[i11]);
-                    const vy = (1 - fx) * ((1 - fy) * v[i00] + fy * v[i01]) + fx * ((1 - fy) * v[i10] + fy * v[i11]);
-
-                    return [vx, vy];
+                // Setup geometry for full-screen quad
+                const blitBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, blitBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+                const blitFunc = (target) => {
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, target);
+                    gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
                 };
 
-                /* Advect Step */
-                const advect = (field, field0, dt) => {
-                    for (let y = 1; y < GH - 1; y++) {
-                        for (let x = 1; x < GW - 1; x++) {
-                            const idx = IX(x, y);
-                            if (obstacle[idx]) { field[idx] = 0; continue; }
+                const baseVertex = compileShader(gl, gl.VERTEX_SHADER, baseVertexShader);
+                
+                // Init Programs
+                const displayProgram = new Program(gl, baseVertex, displayShaderSource);
+                const splatProgram = new Program(gl, baseVertex, splatShaderSource);
+                const advectionProgram = new Program(gl, baseVertex, advectionShaderSource);
+                const divergenceProgram = new Program(gl, baseVertex, divergenceShaderSource);
+                const pressureProgram = new Program(gl, baseVertex, pressureShaderSource);
+                const gradSubtractProgram = new Program(gl, baseVertex, gradientSubtractShaderSource);
+                const generateObstacleProgram = new Program(gl, baseVertex, generateObstacleShaderSource);
+                const inflowProgram = new Program(gl, baseVertex, inflowShaderSource);
 
-                            let prevX = x - dt * u[idx];
-                            let prevY = y - dt * v[idx];
+                gl.bindBuffer(gl.ARRAY_BUFFER, blitBuffer);
+                const aPosition = gl.getAttribLocation(displayProgram.program, 'aPosition');
+                gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aPosition);
 
-                            prevX = Math.max(0.5, Math.min(GW - 1.5, prevX));
-                            prevY = Math.max(0.5, Math.min(GH - 1.5, prevY));
+                let simRes = 256; 
+                let dyeRes = 1024;
+                let aspect = 1.0;
+                
+                let velocity, dye, divergence, pressure, obstacle;
 
-                            const i0 = Math.floor(prevX);
-                            const i1 = i0 + 1;
-                            const j0 = Math.floor(prevY);
-                            const j1 = j0 + 1;
-
-                            const s1 = prevX - i0;
-                            const s0 = 1 - s1;
-                            const t1 = prevY - j0;
-                            const t0 = 1 - t1;
-
-                            field[idx] = s0 * (t0 * field0[IX(i0, j0)] + t1 * field0[IX(i0, j1)]) +
-                                         s1 * (t0 * field0[IX(i1, j0)] + t1 * field0[IX(i1, j1)]);
-                        }
-                    }
-                };
-
-                const project = () => {
-                    for (let y = 1; y < GH - 1; y++) {
-                        for (let x = 1; x < GW - 1; x++) {
-                            const idx = IX(x, y);
-                            if (obstacle[idx]) { div[idx] = 0; p[idx] = 0; continue; }
-                            div[idx] = -0.5 * (u[IX(x + 1, y)] - u[IX(x - 1, y)] + v[IX(x, y + 1)] - v[IX(x, y - 1)]);
-                            p[idx] = 0;
-                        }
-                    }
-
-                    for (let k = 0; k < solverIters; k++) {
-                        for (let y = 1; y < GH - 1; y++) {
-                            for (let x = 1; x < GW - 1; x++) {
-                                const idx = IX(x, y);
-                                if (obstacle[idx]) continue;
-                                p[idx] = (div[idx] + p[IX(x + 1, y)] + p[IX(x - 1, y)] + p[IX(x, y + 1)] + p[IX(x, y - 1)]) / 4;
-                            }
-                        }
-                    }
-
-                    for (let y = 1; y < GH - 1; y++) {
-                        for (let x = 1; x < GW - 1; x++) {
-                            const idx = IX(x, y);
-                            if (obstacle[idx]) { u[idx] = 0; v[idx] = 0; continue; }
-                            u[idx] -= 0.5 * (p[IX(x + 1, y)] - p[IX(x - 1, y)]);
-                            v[idx] -= 0.5 * (p[IX(x, y + 1)] - p[IX(x, y - 1)]);
-                        }
-                    }
-                };
-
-                const applyVorticity = () => {
-                    for (let y = 1; y < GH - 1; y++) {
-                        for (let x = 1; x < GW - 1; x++) {
-                            const idx = IX(x, y);
-                            curl[idx] = (v[IX(x + 1, y)] - v[IX(x - 1, y)]) - (u[IX(x, y + 1)] - u[IX(x, y - 1)]);
-                        }
-                    }
-
-                    if (vorticityBoost <= 0) return;
-
-                    for (let y = 2; y < GH - 2; y++) {
-                        for (let x = 2; x < GW - 2; x++) {
-                            const idx = IX(x, y);
-                            if (obstacle[idx]) continue;
-
-                            const dw_dx = (Math.abs(curl[IX(x + 1, y)]) - Math.abs(curl[IX(x - 1, y)])) * 0.5;
-                            const dw_dy = (Math.abs(curl[IX(x, y + 1)]) - Math.abs(curl[IX(x, y - 1)])) * 0.5;
-
-                            let len = Math.sqrt(dw_dx * dw_dx + dw_dy * dw_dy) + 1e-5;
-                            const nx = dw_dx / len;
-                            const ny = dw_dy / len;
-
-                            u[idx] += nx * curl[idx] * vorticityBoost * 0.035;
-                            v[idx] += ny * curl[idx] * vorticityBoost * 0.035;
-                        }
-                    }
-                };
-
-                let timeOffset = 0;
-                const applyInflow = () => {
-                    timeOffset += 0.05;
-                    for (let y = 0; y < GH; y++) {
-                        const isWall = (scene === 'windTunnel') && (y === 0 || y === GH - 1);
-                        for (let x = 0; x < 3; x++) {
-                            const idx = IX(x, y);
-                            if (isWall) {
-                                u[idx] = 0; v[idx] = 0;
-                            } else {
-                                u[idx] = inflowSpeed * (scene === 'supersonic' ? 2.4 : 1.0);
-                                v[idx] = Math.sin(timeOffset + y * 0.3) * inflowSpeed * 0.03;
-                            }
-                        }
-                    }
-                };
-
-                const render = () => {
-                    ctx.clearRect(0, 0, displayW, displayH);
-
-                    const scaleX = displayW / GW;
-                    const scaleY = displayH / GH;
-
-                    let rollingMaxSpd = 1.0, rollingMaxCurl = 1.0, rollingMaxP = 1.0;
-
-                    if (visMode !== 'particles') {
-                        let currMaxSpd = 0.001, currMaxCurl = 0.001, currMaxP = 0.001;
-                        
-                        for (let i = 0; i < gridTotal; i++) {
-                            if (obstacle[i]) continue;
-                            if (visMode === 'speed') {
-                                const s = u[i]*u[i] + v[i]*v[i];
-                                if (s > currMaxSpd) currMaxSpd = s;
-                            } else if (visMode === 'vorticity') {
-                                const c = Math.abs(curl[i]);
-                                if (c > currMaxCurl) currMaxCurl = c;
-                            } else if (visMode === 'pressure') {
-                                const pr = Math.abs(p[i]);
-                                if (pr > currMaxP) currMaxP = pr;
-                            }
-                        }
-                        
-                        currMaxSpd = Math.sqrt(currMaxSpd);
-
-                        rollingMaxSpd = rollingMaxSpd * 0.92 + currMaxSpd * 0.08;
-                        rollingMaxCurl = rollingMaxCurl * 0.92 + currMaxCurl * 0.08;
-                        rollingMaxP = rollingMaxP * 0.92 + currMaxP * 0.08;
-
-                        const scaleSpd = Math.max(0.1, rollingMaxSpd);
-                        const scaleCurl = Math.max(0.1, rollingMaxCurl);
-                        const scaleP = Math.max(0.1, rollingMaxP);
-
-                        const cellW = Math.ceil(scaleX);
-                        const cellH = Math.ceil(scaleY);
-
-                        for (let y = 0; y < GH; y++) {
-                            for (let x = 0; x < GW; x++) {
-                                const idx = IX(x, y);
-                                if (obstacle[idx]) continue;
-
-                                let fillStyle = '#000000';
-
-                                if (visMode === 'speed') {
-                                    const spd = Math.sqrt(u[idx] ** 2 + v[idx] ** 2);
-                                    const norm = Math.min(1.0, spd / scaleSpd);
-                                    const hue = (1.0 - norm) * 240; 
-                                    fillStyle = `hsla(${hue}, 100%, ${20 + norm * 40}%, 0.85)`;
-                                }
-                                else if (visMode === 'vorticity') {
-                                    const norm = Math.max(-1, Math.min(1, curl[idx] / scaleCurl));
-                                    if (norm > 0) { 
-                                        fillStyle = `rgba(${Math.floor(norm * 255)}, ${Math.floor(norm * 100)}, 0, 0.85)`;
-                                    } else { 
-                                        const v2 = -norm;
-                                        fillStyle = `rgba(0, ${Math.floor(v2 * 150)}, ${Math.floor(v2 * 255)}, 0.85)`;
-                                    }
-                                }
-                                else if (visMode === 'pressure') {
-                                    const norm = Math.max(-1, Math.min(1, p[idx] / scaleP));
-                                    if (norm > 0) { 
-                                        fillStyle = `rgba(${Math.floor(norm * 255)}, ${Math.floor(norm * 40)}, ${Math.floor(norm * 40)}, 0.85)`;
-                                    } else { 
-                                        const np = -norm;
-                                        fillStyle = `rgba(${Math.floor(np * 40)}, ${Math.floor(np * 100)}, ${Math.floor(np * 255)}, 0.85)`;
-                                    }
-                                }
-                                else if (visMode === 'schlieren') {
-                                    const gradU = Math.abs(u[IX(Math.min(GW-1, x+1), y)] - u[IX(Math.max(0, x-1), y)]);
-                                    const gradV = Math.abs(v[IX(x, Math.min(GH-1, y+1))] - v[IX(x, Math.max(0, y-1))]);
-                                    const mag = Math.min(1.0, (gradU + gradV) / (scaleCurl * 0.8 + 0.1));
-                                    const val = Math.floor((1 - mag) * 245);
-                                    fillStyle = `rgb(${val}, ${val}, ${val})`;
-                                }
-
-                                ctx.fillStyle = fillStyle;
-                                ctx.fillRect(x * scaleX, y * scaleY, cellW + 0.5, cellH + 0.5);
-                            }
-                        }
-                    }
-
-                    /* Smooth Particle Streamlines */
-                    ctx.lineWidth = (visMode === 'particles') ? 1.4 : 1.0;
-                    ctx.lineCap = 'round';
-
-                    for (let i = 0; i < particles.length; i++) {
-                        const pt = particles[i];
-
-                        const [vx1, vy1] = sampleVelocity(pt.x, pt.y);
-                        const [vx2, vy2] = sampleVelocity(pt.x + vx1 * 0.5, pt.y + vy1 * 0.5);
-
-                        const pxNew = pt.x + vx2 * 0.8;
-                        const pyNew = pt.y + vy2 * 0.8;
-
-                        const isBlocked = obstacle[IX(pxNew, pyNew)];
-                        if (pxNew >= GW - 1 || pxNew <= 0 || pyNew >= GH - 1 || pyNew <= 0 || isBlocked || pt.age > pt.life) {
-                            pt.x = Math.random() * 4;
-                            pt.y = Math.random() * GH;
-                            pt.age = 0;
-                            pt.history = [];
-                            pt.hue = (pt.y / GH) * 160 + 170;
-                            continue;
-                        }
-
-                        pt.history.push({ x: pt.x * scaleX, y: pt.y * scaleY });
-                        if (pt.history.length > 8) pt.history.shift();
-
-                        pt.x = pxNew;
-                        pt.y = pyNew;
-                        pt.age++;
-
-                        if (pt.history.length > 1) {
-                            ctx.beginPath();
-                            ctx.moveTo(pt.history[0].x, pt.history[0].y);
-                            for (let h = 1; h < pt.history.length; h++) {
-                                ctx.lineTo(pt.history[h].x, pt.history[h].y);
-                            }
-
-                            const speedMag = Math.sqrt(vx2 * vx2 + vy2 * vy2);
-                            const alpha = Math.min(1.0, (pt.age / 10)) * (1 - pt.age / pt.life);
-
-                            if (visMode === 'particles') {
-                                ctx.strokeStyle = `hsla(${pt.hue + speedMag * 15}, 95%, 60%, ${alpha * 0.85})`;
-                            } else {
-                                ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.4})`;
-                            }
-                            ctx.stroke();
-                        }
-                    }
-
-                    /* Render Solid Obstacle Geometry smoothly */
-                    ctx.save();
-                    ctx.fillStyle = '#0f172a';
-                    ctx.strokeStyle = '#38bdf8';
-                    ctx.lineWidth = 2.5;
-                    ctx.shadowColor = 'rgba(56, 189, 248, 0.6)';
-                    ctx.shadowBlur = 12;
-
-                    const S = scaleX; 
+                const initFBOs = () => {
+                    const width = container.clientWidth;
+                    const height = container.clientHeight;
+                    aspect = width / height;
                     
-                    if (obstacleType !== 'none') {
-                        ctx.beginPath();
-                        
-                        if (obstacleType === 'designedRocket' && customRocket) {
-                            const engineXStart = GW * 0.08 * S;
-                            const scaleR = (GH * 0.32 * scaleY) / (customRocket.Dc || 0.1);
-                            
-                            const rC = (customRocket.Dc / 2) * scaleR;
-                            const rT = (customRocket.Dt / 2) * scaleR;
-                            const rE = (customRocket.De / 2) * scaleR;
+                    canvas.width = width;
+                    canvas.height = height;
 
-                            const scaleL = (GW * 0.75 * S) / (customRocket.L_cyl + customRocket.L_conv + customRocket.L_div || 0.3);
-                            const lCyl = customRocket.L_cyl * scaleL;
-                            const lConv = customRocket.L_conv * scaleL;
-                            const lDiv = customRocket.L_div * scaleL;
+                    const simW = Math.round(simRes * aspect);
+                    const simH = simRes;
+                    const dyeW = Math.round(dyeRes * aspect);
+                    const dyeH = dyeRes;
 
-                            const xCylEnd = engineXStart + lCyl;
-                            const xThroat = xCylEnd + lConv;
-                            const xExit = xThroat + lDiv;
+                    velocity = createDoubleFBO(gl, simW, simH, ext.formatRGBA.internalFormat, ext.formatRGBA.format, ext.halfFloatTexType, gl.LINEAR);
+                    dye = createDoubleFBO(gl, dyeW, dyeH, ext.formatRGBA.internalFormat, ext.formatRGBA.format, ext.halfFloatTexType, gl.LINEAR);
+                    divergence = createFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
+                    pressure = createDoubleFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
+                    obstacle = createFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
 
-                            const centerY = (GH / 2) * scaleY;
-
-                            /* Top Wall Outer Block */
-                            ctx.rect(engineXStart, 0, xExit - engineXStart, centerY - rC);
-                            ctx.moveTo(engineXStart, centerY - rC);
-                            ctx.lineTo(xCylEnd, centerY - rC);
-                            ctx.lineTo(xThroat, centerY - rT);
-                            
-                            if (customRocket.shape === 'bell') {
-                                for(let i=1; i<=30; i++) {
-                                    const frac = i/30;
-                                    const rx = xThroat + frac * lDiv;
-                                    const ry = centerY - (rT + Math.pow(frac, 0.7) * (rE - rT));
-                                    ctx.lineTo(rx, ry);
-                                }
-                            } else {
-                                ctx.lineTo(xExit, centerY - rE);
-                            }
-                            ctx.lineTo(xExit, 0); ctx.lineTo(engineXStart, 0); ctx.closePath();
-
-                            /* Bottom Wall Outer Block */
-                            ctx.rect(engineXStart, centerY + rC, xExit - engineXStart, displayH - (centerY + rC));
-                            ctx.moveTo(engineXStart, centerY + rC);
-                            ctx.lineTo(xCylEnd, centerY + rC);
-                            ctx.lineTo(xThroat, centerY + rT);
-                            
-                            if (customRocket.shape === 'bell') {
-                                for(let i=1; i<=30; i++) {
-                                    const frac = i/30;
-                                    const rx = xThroat + frac * lDiv;
-                                    const ry = centerY + (rT + Math.pow(frac, 0.7) * (rE - rT));
-                                    ctx.lineTo(rx, ry);
-                                }
-                            } else {
-                                ctx.lineTo(xExit, centerY + rE);
-                            }
-                            ctx.lineTo(xExit, displayH); ctx.lineTo(engineXStart, displayH); ctx.closePath();
-
-                        } else if (obstacleType === 'nozzle') {
-                            const nw = GW * 0.55 * S;
-                            const noxX = obsX * S;
-                            
-                            for (let i = 0; i <= 50; i++) {
-                                const nx = i / 50;
-                                const gridX = (noxX - nw/2) + nx * nw;
-                                let wallY = (nx < 0.35) ? (GH * 0.16 + (0.35 - nx) * GH * 0.28) : (GH * 0.16 + (nx - 0.35) * GH * 0.38);
-                                ctx.lineTo(gridX, wallY * S);
-                            }
-                            ctx.lineTo(noxX + nw/2, 0); ctx.lineTo(noxX - nw/2, 0);
-                            ctx.closePath();
-                            ctx.fill(); ctx.stroke();
-                            
-                            ctx.beginPath();
-                            for (let i = 0; i <= 50; i++) {
-                                const nx = i / 50;
-                                const gridX = (noxX - nw/2) + nx * nw;
-                                let wallY = (nx < 0.35) ? (GH * 0.16 + (0.35 - nx) * GH * 0.28) : (GH * 0.16 + (nx - 0.35) * GH * 0.38);
-                                ctx.lineTo(gridX, (GH - wallY) * S);
-                            }
-                            ctx.lineTo(noxX + nw/2, GH * S); ctx.lineTo(noxX - nw/2, GH * S);
-                            ctx.closePath();
-                            
-                        } else {
-                            ctx.translate(obsX * S, obsY * scaleY);
-                            ctx.rotate((aoa * Math.PI) / 180);
-
-                            if (obstacleType === 'cylinder') {
-                                ctx.arc(0, 0, obstacleSize * 0.45 * S, 0, Math.PI * 2);
-                            } 
-                            else if (obstacleType === 'flatPlate') {
-                                const w = obstacleSize * 0.8 * S;
-                                const h = 2.2 * scaleY;
-                                ctx.rect(-w, -h, w * 2, h * 2);
-                            }
-                            else if (obstacleType === 'airfoil') {
-                                const chord = obstacleSize * 2.2 * S;
-                                const cx = -chord * 0.32;
-                                const naca = (xc) => 5 * 0.15 * (0.2969 * Math.sqrt(xc) - 0.1260 * xc - 0.3516 * Math.pow(xc, 2) + 0.2843 * Math.pow(xc, 3) - 0.1015 * Math.pow(xc, 4));
-                                for (let i = 0; i <= 50; i++) {
-                                    const xc = i / 50;
-                                    ctx.lineTo(cx + xc * chord, -(naca(xc) * chord));
-                                }
-                                for (let i = 50; i >= 0; i--) {
-                                    const xc = i / 50;
-                                    ctx.lineTo(cx + xc * chord, (naca(xc) * chord));
-                                }
-                                ctx.closePath();
-                            }
-                            else if (obstacleType === 'shuttle') {
-                                const length = obstacleSize * 2.5 * S;
-                                const cx = -length * 0.4;
-                                for (let i = 0; i <= 50; i++) {
-                                    const xc = i / 50;
-                                    const yt = Math.sin(xc * Math.PI) * (obstacleSize * 0.45 * scaleY);
-                                    ctx.lineTo(cx + xc * length, -yt);
-                                }
-                                for (let i = 50; i >= 0; i--) {
-                                    const xc = i / 50;
-                                    const yt = Math.sin(xc * Math.PI) * (obstacleSize * 0.45 * scaleY);
-                                    ctx.lineTo(cx + xc * length, yt);
-                                }
-                                ctx.closePath();
-                            }
-                        }
-
-                        ctx.fill();
-                        ctx.stroke();
-                    }
-                    ctx.restore();
-
-                    if (scene === 'windTunnel') {
-                        ctx.strokeStyle = 'rgba(148, 163, 184, 0.5)';
-                        ctx.lineWidth = 4;
-                        ctx.beginPath();
-                        ctx.moveTo(0, 2); ctx.lineTo(displayW, 2);
-                        ctx.moveTo(0, displayH - 2); ctx.lineTo(displayW, displayH - 2);
-                        ctx.stroke();
-                    }
+                    simStateRef.current = { velocity, dye, divergence, pressure, obstacle, aspect };
+                    
+                    updateObstacleGeometry();
                 };
+
+                const updateObstacleGeometry = () => {
+                    if(!obstacle) return;
+                    generateObstacleProgram.bind();
+                    gl.uniform1f(generateObstacleProgram.uniforms.uAspect, aspect);
+                    
+                    let typeInt = 0;
+                    if(obstacleType === 'cylinder') typeInt = 1;
+                    else if(obstacleType === 'flatPlate') typeInt = 2;
+                    else if(obstacleType === 'airfoil') typeInt = 3;
+                    else if(obstacleType === 'nozzle') typeInt = 4;
+                    
+                    gl.uniform1i(generateObstacleProgram.uniforms.uType, typeInt);
+                    blitFunc(obstacle.fbo);
+                };
+                
+                // Expose obstacle updater
+                extRef.current.updateObstacle = updateObstacleGeometry;
+
+                initFBOs();
+
+                // Splat function for interaction
+                const splat = (x, y, dx, dy, color) => {
+                    if(!velocity || !dye) return;
+                    splatProgram.bind();
+                    gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.texture);
+                    gl.uniform1f(splatProgram.uniforms.aspectRatio, aspect);
+                    gl.uniform2f(splatProgram.uniforms.point, x, 1.0 - y);
+                    gl.uniform3f(splatProgram.uniforms.color, dx, -dy, 0.0);
+                    gl.uniform1f(splatProgram.uniforms.radius, dyeRadius);
+                    blitFunc(velocity.write.fbo);
+                    velocity.swap();
+
+                    gl.uniform1i(splatProgram.uniforms.uTarget, dye.read.texture);
+                    gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b);
+                    blitFunc(dye.write.fbo);
+                    dye.swap();
+                };
+                
+                // Apply constant inflow
+                const applyInflow = () => {
+                     if(!velocity || !dye) return;
+                     inflowProgram.bind();
+                     
+                     // Velocity
+                     gl.activeTexture(gl.TEXTURE0);
+                     gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                     gl.uniform1i(inflowProgram.uniforms.uTarget, 0);
+                     gl.uniform1f(inflowProgram.uniforms.uSpeed, inflowSpeed);
+                     gl.uniform1i(inflowProgram.uniforms.uType, 0);
+                     blitFunc(velocity.write.fbo);
+                     velocity.swap();
+                     
+                     // Dye
+                     gl.bindTexture(gl.TEXTURE_2D, dye.read.texture);
+                     gl.uniform1i(inflowProgram.uniforms.uTarget, 0);
+                     gl.uniform1i(inflowProgram.uniforms.uType, 1);
+                     blitFunc(dye.write.fbo);
+                     dye.swap();
+                }
 
                 let lastTime = performance.now();
                 let frameCount = 0;
 
                 const step = () => {
-                    if (!isPaused) {
-                        applyInflow();
-
-                        u0.set(u); v0.set(v);
-                        advect(u, u0, 1.0);
-                        advect(v, v0, 1.0);
-
-                        applyVorticity();
-                        project();
-
-                        render();
+                    if (isPaused) {
+                        animFrameRef.current = requestAnimationFrame(step);
+                        return;
                     }
 
+                    const state = simStateRef.current;
+                    if(!state) return;
+                    const { velocity, dye, divergence, pressure, obstacle } = state;
+                    
+                    const dt = 0.016;
+
+                    gl.viewport(0, 0, velocity.width, velocity.height);
+
+                    // Add inflow
+                    applyInflow();
+
+                    // Advect velocity
+                    advectionProgram.bind();
+                    gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(advectionProgram.uniforms.uVelocity, 0);
+                    gl.uniform1i(advectionProgram.uniforms.uSource, 0);
+                    gl.uniform1i(advectionProgram.uniforms.uObstacle, 1);
+                    gl.uniform1f(advectionProgram.uniforms.dt, dt);
+                    gl.uniform1f(advectionProgram.uniforms.dissipation, 0.0); // No velocity dissipation
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, obstacle.texture);
+                    blitFunc(velocity.write.fbo);
+                    velocity.swap();
+
+                    // Advect dye (smoke)
+                    gl.viewport(0, 0, dye.width, dye.height);
+                    gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
+                    gl.uniform1i(advectionProgram.uniforms.uVelocity, 0);
+                    gl.uniform1i(advectionProgram.uniforms.uSource, 2);
+                    gl.uniform1f(advectionProgram.uniforms.dissipation, 0.5); // Smoke dissipates
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE2);
+                    gl.bindTexture(gl.TEXTURE_2D, dye.read.texture);
+                    blitFunc(dye.write.fbo);
+                    dye.swap();
+
+                    // Handle interaction splat
+                    const ptr = pointerRef.current;
+                    if (ptr.isDown && ptr.moved) {
+                        splat(ptr.x, ptr.y, ptr.dx, ptr.dy, {r: 0.8, g: 0.9, b: 0.6});
+                        ptr.moved = false;
+                    }
+
+                    gl.viewport(0, 0, velocity.width, velocity.height);
+
+                    // Compute Divergence
+                    divergenceProgram.bind();
+                    gl.uniform2f(divergenceProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(divergenceProgram.uniforms.uVelocity, 0);
+                    gl.uniform1i(divergenceProgram.uniforms.uObstacle, 1);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, obstacle.texture);
+                    blitFunc(divergence.fbo);
+
+                    // Solve Pressure
+                    pressureProgram.bind();
+                    gl.uniform2f(pressureProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(pressureProgram.uniforms.uDivergence, 0);
+                    gl.uniform1i(pressureProgram.uniforms.uPressure, 2);
+                    gl.uniform1i(pressureProgram.uniforms.uObstacle, 1);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, divergence.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, obstacle.texture);
+
+                    // Clear pressure
+                    gl.activeTexture(gl.TEXTURE2);
+                    gl.bindTexture(gl.TEXTURE_2D, pressure.read.texture);
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, pressure.read.fbo);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+
+                    // Jacobi iterations
+                    for (let i = 0; i < solverIters; i++) {
+                        gl.bindTexture(gl.TEXTURE_2D, pressure.read.texture);
+                        blitFunc(pressure.write.fbo);
+                        pressure.swap();
+                    }
+
+                    // Subtract Gradient
+                    gradSubtractProgram.bind();
+                    gl.uniform2f(gradSubtractProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(gradSubtractProgram.uniforms.uPressure, 2);
+                    gl.uniform1i(gradSubtractProgram.uniforms.uVelocity, 0);
+                    gl.uniform1i(gradSubtractProgram.uniforms.uObstacle, 1);
+                    gl.activeTexture(gl.TEXTURE2);
+                    gl.bindTexture(gl.TEXTURE_2D, pressure.read.texture);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, obstacle.texture);
+                    blitFunc(velocity.write.fbo);
+                    velocity.swap();
+
+                    // Render to Screen
+                    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                    displayProgram.bind();
+                    gl.uniform1i(displayProgram.uniforms.uTexture, 0); // dye
+                    gl.uniform1i(displayProgram.uniforms.uVelocity, 1);
+                    gl.uniform1i(displayProgram.uniforms.uObstacle, 2);
+                    
+                    let vModeInt = 0;
+                    if(visMode === 'speed') vModeInt = 1;
+                    else if(visMode === 'pressure') vModeInt = 2;
+                    
+                    gl.uniform1i(displayProgram.uniforms.uVisMode, vModeInt);
+                    gl.uniform1f(displayProgram.uniforms.uInflowSpeed, inflowSpeed);
+
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, (vModeInt===2) ? pressure.read.texture : dye.read.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE2);
+                    gl.bindTexture(gl.TEXTURE_2D, obstacle.texture);
+                    
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Draw to canvas
+                    gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+
+                    // FPS calc
                     frameCount++;
                     const now = performance.now();
                     if (now - lastTime >= 1000) {
@@ -705,84 +868,82 @@
 
                 animFrameRef.current = requestAnimationFrame(step);
 
-                simRef.current = {
-                    reset: () => {
-                        u.fill(0); v.fill(0); p.fill(0);
-                        initParticles();
-                    },
-                    stir: (cx, cy, radius, forceX, forceY) => {
-                        const gx = Math.floor((cx / displayW) * GW);
-                        const gy = Math.floor((cy / displayH) * GH);
-                        const rGrid = Math.floor(radius);
-
-                        for (let y = gy - rGrid; y <= gy + rGrid; y++) {
-                            for (let x = gx - rGrid; x <= gx + rGrid; x++) {
-                                if (x >= 0 && x < GW && y >= 0 && y < GH) {
-                                    const idx = IX(x, y);
-                                    u[idx] += forceX * 0.25;
-                                    v[idx] += forceY * 0.25;
-                                }
-                            }
-                        }
-                    }
+                const handleResize = () => {
+                    initFBOs();
                 };
+                window.addEventListener('resize', handleResize);
 
                 return () => {
+                    window.removeEventListener('resize', handleResize);
                     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
                 };
-            }, [scene, visMode, obstacleType, obstacleSize, aoa, inflowSpeed, vorticityBoost, particleCount, solverIters, isPaused, customRocket]);
+            }, [obstacleType, visMode, inflowSpeed, solverIters, isPaused]); // Added dependencies to re-trigger necessary parts
 
-            const handleCanvasPointer = (e) => {
-                if (!displayCanvasRef.current || !simRef.current) return;
-                const rect = displayCanvasRef.current.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-
-                if (e.buttons === 1) {
-                    simRef.current.stir(x, y, 10, e.movementX, e.movementY);
+            // Trigger obstacle update if it changes without full re-mount
+            React.useEffect(() => {
+                if(extRef.current && extRef.current.updateObstacle) {
+                    extRef.current.updateObstacle();
                 }
+            }, [obstacleType]);
+
+            const handlePointerDown = (e) => {
+                const rect = canvasRef.current.getBoundingClientRect();
+                pointerRef.current.isDown = true;
+                pointerRef.current.x = (e.clientX - rect.left) / rect.width;
+                pointerRef.current.y = (e.clientY - rect.top) / rect.height;
             };
 
+            const handlePointerMove = (e) => {
+                if (!pointerRef.current.isDown) return;
+                const rect = canvasRef.current.getBoundingClientRect();
+                const newX = (e.clientX - rect.left) / rect.width;
+                const newY = (e.clientY - rect.top) / rect.height;
+                
+                pointerRef.current.dx = (newX - pointerRef.current.x) * 10.0;
+                pointerRef.current.dy = (newY - pointerRef.current.y) * 10.0;
+                pointerRef.current.x = newX;
+                pointerRef.current.y = newY;
+                pointerRef.current.moved = true;
+            };
+
+            const handlePointerUp = () => {
+                pointerRef.current.isDown = false;
+            };
+
+            if (!webglSupported) {
+                return (
+                    <div className="w-full p-8 text-center bg-red-50 text-red-800 rounded-xl border border-red-200">
+                        <h3 className="font-bold mb-2">WebGL 2 Not Supported</h3>
+                        <p>Your browser or device does not support WebGL 2, which is required for the GPU-accelerated fluid simulation.</p>
+                    </div>
+                );
+            }
+
             return (
-                <div id="cfd-viewport" className="flex flex-col lg:flex-row gap-6 w-full p-2">
+                <div id="cfd-viewport" className="flex flex-col lg:flex-row gap-6 w-full mt-4">
                     {/* Control Sidebar */}
                     <div className="w-full lg:w-1/3 flex flex-col gap-5">
-                        <div className="bg-slate-900/85 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
-                            <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
-                                <h4 className="font-bold text-sky-400 text-lg flex items-center gap-2">
-                                    <span>🌊 CFD Vector Fluid Solver</span>
+                        <div className="bg-stone-50/60 p-5 rounded-2xl border border-stone-200 space-y-4 shadow-sm">
+                            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+                                <h4 className="font-bold text-stone-800 text-lg flex items-center gap-2">
+                                    <span>GPU Navier-Stokes Solver</span>
                                 </h4>
-                                <span className="text-xs font-mono bg-sky-950 text-sky-300 border border-sky-800 px-2.5 py-1 rounded-full font-bold">
+                                <span className="text-xs font-mono bg-stone-200 text-stone-700 border border-stone-300 px-2.5 py-1 rounded-full font-bold">
                                     {fps} FPS
                                 </span>
                             </div>
 
-                            {/* Scene Mode */}
-                            <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Test Environment</label>
-                                <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                                    {['windTunnel', 'supersonic', 'openFlow'].map(m => (
-                                        <button key={m} onClick={()=>setScene(m)}
-                                                className={`py-1.5 px-2 text-xs font-bold rounded-lg capitalize transition ${scene === m ? 'bg-sky-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                                            {m === 'windTunnel' ? 'Wind Tunnel' : m === 'supersonic' ? 'Supersonic' : 'Free Stream'}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
                             {/* Visualization Mode */}
                             <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Flow Visualization</label>
-                                <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                                <label className="text-xs font-bold uppercase tracking-wider text-stone-500 mb-1 block">Flow Visualization</label>
+                                <div className="grid grid-cols-3 gap-1 bg-stone-200/50 p-1 rounded-xl border border-stone-200">
                                     {[
-                                        { id: 'particles', label: 'Smoke Trails' },
+                                        { id: 'particles', label: 'Smoke Dye' },
                                         { id: 'speed', label: 'Velocity' },
-                                        { id: 'vorticity', label: 'Vorticity' },
                                         { id: 'pressure', label: 'Pressure' },
-                                        { id: 'schlieren', label: 'Schlieren' }
                                     ].map(v => (
                                         <button key={v.id} onClick={()=>setVisMode(v.id)}
-                                                className={`py-1.5 px-1 text-xs font-bold rounded-lg transition ${visMode === v.id ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                                                className={`py-1.5 px-1 text-xs font-bold rounded-lg transition ${visMode === v.id ? 'bg-[#6b7a57] text-white shadow-md' : 'text-stone-600 hover:bg-stone-200'}`}>
                                             {v.label}
                                         </button>
                                     ))}
@@ -791,88 +952,83 @@
 
                             {/* Obstacle Selection */}
                             <div>
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1 block">Aerodynamic Model</label>
-                                <select className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2 text-sm font-semibold text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                                <label className="text-xs font-bold uppercase tracking-wider text-stone-500 mb-1 block">Aerodynamic Model</label>
+                                <select className="w-full bg-white border border-stone-300 rounded-xl p-2 text-sm font-semibold text-stone-700 focus:outline-none focus:ring-2 focus:ring-[#4a5d3c]"
                                         value={obstacleType} onChange={e=>setObstacleType(e.target.value)}>
-                                    <option value="designedRocket">🚀 Custom Designed Rocket Engine (Active Sizer)</option>
-                                    <option value="airfoil">NACA Airfoil Profile</option>
-                                    <option value="shuttle">Space Plane / Shuttle</option>
-                                    <option value="cylinder">Circular Cylinder (Vortex Shedding)</option>
-                                    <option value="flatPlate">Flat Plate / Normal Deflector</option>
-                                    <option value="nozzle">CD Rocket Nozzle Duct</option>
                                     <option value="none">Free Laminar Flow</option>
+                                    <option value="airfoil">NACA Airfoil Profile</option>
+                                    <option value="cylinder">Circular Cylinder</option>
+                                    <option value="flatPlate">Flat Plate</option>
+                                    <option value="nozzle">CD Rocket Nozzle Duct</option>
                                 </select>
                             </div>
 
                             {/* Physics Sliders */}
                             <div className="space-y-3 pt-2">
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                <label className="flex flex-col text-xs font-semibold text-stone-600">
                                     <span className="flex justify-between">
                                         <span>Freestream Velocity (U∞)</span>
-                                        <span className="font-mono text-sky-400">{inflowSpeed.toFixed(1)}</span>
+                                        <span className="font-mono text-[#4a5d3c]">{inflowSpeed.toFixed(1)}</span>
                                     </span>
-                                    <input type="range" min="0.5" max="4.5" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
+                                    <input type="range" min="0.5" max="8.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
                                 </label>
 
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                <label className="flex flex-col text-xs font-semibold text-stone-600">
                                     <span className="flex justify-between">
-                                        <span>Angle of Attack (α)</span>
-                                        <span className="font-mono text-sky-400">{aoa}°</span>
+                                        <span>Pressure Iterations (Accuracy)</span>
+                                        <span className="font-mono text-[#4a5d3c]">{solverIters}</span>
                                     </span>
-                                    <input type="range" min="-25" max="25" step="1" value={aoa} onChange={e=>setAoA(Number(e.target.value))}/>
+                                    <input type="range" min="10" max="60" step="5" value={solverIters} onChange={e=>setSolverIters(Number(e.target.value))}/>
                                 </label>
-
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
+                                
+                                <label className="flex flex-col text-xs font-semibold text-stone-600">
                                     <span className="flex justify-between">
-                                        <span>Streamline Density</span>
-                                        <span className="font-mono text-sky-400">{particleCount}</span>
+                                        <span>Interaction Brush Size</span>
+                                        <span className="font-mono text-[#4a5d3c]">{dyeRadius.toFixed(3)}</span>
                                     </span>
-                                    <input type="range" min="1000" max="6000" step="500" value={particleCount} onChange={e=>setParticleCount(Number(e.target.value))}/>
-                                </label>
-
-                                <label className="flex flex-col text-xs font-semibold text-slate-300">
-                                    <span className="flex justify-between">
-                                        <span>Vorticity Confinement</span>
-                                        <span className="font-mono text-sky-400">{vorticityBoost.toFixed(1)}</span>
-                                    </span>
-                                    <input type="range" min="0" max="6.0" step="0.2" value={vorticityBoost} onChange={e=>setVorticityBoost(Number(e.target.value))}/>
+                                    <input type="range" min="0.005" max="0.05" step="0.005" value={dyeRadius} onChange={e=>setDyeRadius(Number(e.target.value))}/>
                                 </label>
                             </div>
 
                             {/* Controls */}
                             <div className="flex gap-2 pt-2">
                                 <button onClick={()=>setIsPaused(!isPaused)} 
-                                        className={`flex-1 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition ${isPaused ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}>
-                                    {isPaused ? '▶ Resume' : '⏸ Pause'}
+                                        className={`flex-1 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition ${isPaused ? 'bg-[#8a9a7a] hover:bg-[#6b7a57] text-white' : 'bg-[#e3dcd1] hover:bg-[#d8cfbc] text-stone-800'}`}>
+                                    {isPaused ? 'Resume' : 'Pause'}
                                 </button>
-                                <button onClick={()=>simRef.current?.reset()} 
-                                        className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition border border-slate-700">
-                                    🔄 Reset Flow
-                                </button>
+                                <div className="text-xs text-stone-400 italic text-center w-full py-2">
+                                    Click & Drag to interact with fluid
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     {/* High Precision Graphics Viewport */}
-                    <div className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-slate-950 rounded-2xl border-2 border-slate-800 p-3 shadow-2xl relative overflow-hidden min-h-[400px]">
-                        <div className="absolute top-4 left-5 text-xs font-mono bg-slate-900/90 text-sky-300 px-3.5 py-1.5 rounded-full border border-slate-700 z-10 pointer-events-none shadow-lg flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
-                            <span>High-DPI Vector Streamlines • Interactive Flow Field</span>
+                    <div ref={containerRef} className="w-full lg:w-2/3 flex flex-col items-center justify-center bg-stone-100/50 rounded-2xl border border-stone-200 p-3 shadow-inner relative overflow-hidden min-h-[400px]">
+                        <div className="absolute top-4 left-5 text-xs font-mono bg-stone-900/80 text-[#e6dec9] px-3.5 py-1.5 rounded-full border border-stone-700 z-10 pointer-events-none shadow-sm flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#8a9a7a] animate-ping"></span>
+                            <span>WebGL2 Compute • GPU Accelerated</span>
                         </div>
 
-                        <canvas ref={displayCanvasRef} 
-                                onPointerDown={handleCanvasPointer} 
-                                onPointerMove={handleCanvasPointer}
-                                className="cfd-canvas w-full h-auto rounded-xl border border-slate-800/90 shadow-2xl bg-slate-950" />
+                        <canvas ref={canvasRef} 
+                                onPointerDown={handlePointerDown}
+                                onPointerMove={handlePointerMove}
+                                onPointerUp={handlePointerUp}
+                                onPointerLeave={handlePointerUp}
+                                className="cfd-canvas rounded-xl border border-stone-800/80 shadow-lg bg-[#181d16]" />
 
-                        <div className="w-full flex justify-between items-center px-3 py-2 text-xs text-slate-400 font-mono">
-                            <span>Visualization: <strong className="text-sky-400 uppercase">{visMode}</strong></span>
-                            <span>Engine: <strong className="text-emerald-400">Navier-Stokes RK2 Streamline Advection</strong></span>
+                        <div className="w-full flex justify-between items-center px-3 py-2 text-xs text-stone-500 font-mono">
+                            <span>Grid Resolution: <strong className="text-stone-700">High (GPU)</strong></span>
+                            <span>Engine: <strong className="text-stone-700">GLSL Eulerian Grid</strong></span>
                         </div>
                     </div>
                 </div>
             );
         };
+        // ---------------------------------------------------------
+        // End WebGL Component
+        // ---------------------------------------------------------
+
 
         const RocketEngineSizer = ({ onUpdateCustomRocket, onLoadCFD }) => {
             const [unit, setUnit] = React.useState('SI');
@@ -886,10 +1042,9 @@
             const [propellant, setPropellant] = React.useState('N2O/Ethanol');
             const [nozzleShape, setNozzleShape] = React.useState('bell');
 
-            /* New Customization Controls */
             const [customOF, setCustomOF] = React.useState(4.0);
-            const [thetaConv, setThetaConv] = React.useState(30); /* Convergent Half Angle (deg) */
-            const [thetaDiv, setThetaDiv] = React.useState(15);  /* Divergent Half Angle (deg) */
+            const [thetaConv, setThetaConv] = React.useState(30); 
+            const [thetaDiv, setThetaDiv] = React.useState(15);  
 
             const propData = {
                 'N2O/Ethanol':   { gamma: 1.23, mw: 25.2, Tc: 3050, Lstar: 1.25, defaultOF: 4.0, name: "N₂O / Ethanol (Nitrous Biprop)" },
@@ -900,7 +1055,6 @@
                 'NTO/MMH':       { gamma: 1.21, mw: 23.5, Tc: 3400, Lstar: 0.90, defaultOF: 2.1, name: "NTO / MMH (Hypergolic)" }
             };
 
-            /* Sync O/F ratio when propellant changes */
             React.useEffect(() => {
                 setCustomOF(propData[propellant].defaultOF);
             }, [propellant]);
@@ -951,7 +1105,6 @@
                 const Dc = Math.sqrt((4 * Ac) / Math.PI);
                 const Vc = data.Lstar * At;
 
-                /* Geometry with Custom Half Angles */
                 const thetaConvRad = thetaConv * (Math.PI / 180);
                 const thetaDivRad = thetaDiv * (Math.PI / 180);
 
@@ -972,7 +1125,6 @@
 
             const results = calculateEngine();
 
-            /* Sync geometry to parent state for CFD Simulation */
             React.useEffect(() => {
                 if (results && onUpdateCustomRocket) {
                     onUpdateCustomRocket({
@@ -992,24 +1144,24 @@
             const UnitSlider = ({ label, si, imp, info }) => {
                 const conf = unit === 'SI' ? si : imp;
                 return (
-                    <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                    <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                         <span className="flex justify-between items-end">
                             <span>{label}</span>
-                            <span className="font-mono text-amber-400">
+                            <span className="font-mono text-[#4a5d3c]">
                                 {Number(conf.val).toFixed(conf.step < 1 ? 1 : 0)} {conf.unit}
                             </span>
                         </span>
                         <input type="range" min={conf.min} max={conf.max} step={conf.step} value={conf.val}
                                onChange={e => conf.set(Number(e.target.value))}
                                className="mt-1" />
-                        {info && <span className="text-[10px] text-slate-400 font-normal">{info}</span>}
+                        {info && <span className="text-[10px] text-stone-400 font-normal">{info}</span>}
                     </label>
                 );
             };
 
             const OutputBox = ({ label, value, colorClass }) => (
-                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex flex-col justify-center shadow-inner">
-                    <p className="text-slate-400 text-[10px] leading-tight mb-1 uppercase tracking-wider">{label}</p>
+                <div className="bg-stone-50/10 p-2.5 rounded-xl border border-stone-100/10 flex flex-col justify-center shadow-inner">
+                    <p className="text-[#c2b8a3] text-[10px] leading-tight mb-1 uppercase tracking-wider">{label}</p>
                     <p className={`text-base md:text-lg font-bold font-mono ${colorClass}`}>{value}</p>
                 </div>
             );
@@ -1024,9 +1176,9 @@
                 const L_total = results.L_cyl + results.L_conv + results.L_div;
                 const maxRadius = Math.max(results.De / 2, results.Dc / 2, 0.1);
                 
-                const marginX = 60;
-                const printW = width - marginX * 2;
-                const scaleY = (height * 0.30) / maxRadius;
+                const marginX = 70; 
+                const printW = width - marginX * 2.5;
+                const scaleY = (height * 0.28) / maxRadius;
                 
                 const x_inj = marginX;
                 const x_cyl_end = x_inj + (results.L_cyl / L_total) * printW;
@@ -1058,71 +1210,83 @@
                 const nozzleOpacity = (tab === 'nozzle' || tab === 'combined') ? 1.0 : 0.15;
 
                 return (
-                    <svg className="w-full h-full drop-shadow-2xl transition-all duration-300" viewBox={`0 0 ${width} ${height}`}>
+                    <svg className="w-full h-full drop-shadow-sm transition-all duration-300 rounded-xl bg-stone-200/40" viewBox={`0 0 ${width} ${height}`}>
                         <defs>
+                            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(107, 122, 87, 0.1)" strokeWidth="1"/>
+                            </pattern>
                             <linearGradient id="chamberFlame" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
-                                <stop offset="45%" stopColor="#f97316" stopOpacity="0.9" />
-                                <stop offset="100%" stopColor="#eab308" stopOpacity="0.95" />
+                                <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.75" /> {/* Amber */}
+                                <stop offset="45%" stopColor="#f97316" stopOpacity="0.8" /> {/* Orange */}
+                                <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.85" /> {/* Blue */}
                             </linearGradient>
                             <linearGradient id="nozzleFlame" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" stopColor="#eab308" stopOpacity="0.95" />
-                                <stop offset="40%" stopColor="#38bdf8" stopOpacity="0.85" />
-                                <stop offset="100%" stopColor="#818cf8" stopOpacity="0.6" />
+                                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.85" />
+                                <stop offset="40%" stopColor="#67e8f9" stopOpacity="0.7" /> 
+                                <stop offset="100%" stopColor="#99f6e4" stopOpacity="0.4" /> 
                             </linearGradient>
                             <linearGradient id="plumeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" stopColor="#818cf8" stopOpacity="0.6" />
-                                <stop offset="100%" stopColor="#c084fc" stopOpacity="0.0" />
+                                <stop offset="0%" stopColor="#99f6e4" stopOpacity="0.4" />
+                                <stop offset="100%" stopColor="#ffffff" stopOpacity="0.0" />
                             </linearGradient>
                         </defs>
 
-                        {/* Fills */}
+                        <rect width="100%" height="100%" fill="url(#grid)" rx="12" />
+
                         <path d={chamberFill} fill="url(#chamberFlame)" opacity={chamberOpacity} />
                         <path d={nozzleFill} fill="url(#nozzleFlame)" opacity={nozzleOpacity} />
-                        <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 70},${centerY} ${x_exit},${centerY + r_e} Z`} 
+                        <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 80},${centerY} ${x_exit},${centerY + r_e} Z`} 
                               fill="url(#plumeGrad)" opacity={nozzleOpacity} />
 
-                        {/* Axis of Symmetry */}
-                        <line x1={x_inj - 20} y1={centerY} x2={x_exit + 30} y2={centerY} stroke="#64748b" strokeWidth="1" strokeDasharray="6,4" opacity="0.6" />
+                        {/* Axis & Planes */}
+                        <line x1={x_inj - 20} y1={centerY} x2={x_exit + 40} y2={centerY} stroke="#6b7a57" strokeWidth="1" strokeDasharray="8,6" opacity="0.6" />
+                        
+                        <line x1={x_inj} y1={centerY - maxRadius - 20} x2={x_inj} y2={centerY + maxRadius + 20} stroke="#8a9a7a" strokeWidth="1" strokeDasharray="4,4" opacity="0.5" />
+                        <text x={x_inj} y={centerY - maxRadius - 26} textAnchor="middle" className="text-[10px] fill-stone-600 font-mono tracking-widest">INJ</text>
 
-                        {/* Structural Outlines */}
-                        <path d={chamberTop} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={chamberOpacity} />
-                        <path d={chamberBottom} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={chamberOpacity} />
-                        <path d={nozzleTop} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={nozzleOpacity} />
-                        <path d={nozzleBottom} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={nozzleOpacity} />
+                        <line x1={x_throat} y1={centerY - maxRadius - 20} x2={x_throat} y2={centerY + maxRadius + 20} stroke="#8a9a7a" strokeWidth="1" strokeDasharray="4,4" opacity="0.5" />
+                        <text x={x_throat} y={centerY - maxRadius - 26} textAnchor="middle" className="text-[10px] fill-stone-600 font-mono tracking-widest">THROAT</text>
+
+                        <line x1={x_exit} y1={centerY - maxRadius - 20} x2={x_exit} y2={centerY + maxRadius + 20} stroke="#8a9a7a" strokeWidth="1" strokeDasharray="4,4" opacity="0.5" />
+                        <text x={x_exit} y={centerY - maxRadius - 26} textAnchor="middle" className="text-[10px] fill-stone-600 font-mono tracking-widest">EXIT</text>
+
+                        {/* Structural Outlines (Earthy grey-green) */}
+                        <path d={chamberTop} fill="none" stroke="#5a684b" strokeWidth="4.5" strokeLinecap="round" opacity={chamberOpacity} />
+                        <path d={chamberBottom} fill="none" stroke="#5a684b" strokeWidth="4.5" strokeLinecap="round" opacity={chamberOpacity} />
+                        <path d={nozzleTop} fill="none" stroke="#5a684b" strokeWidth="4.5" strokeLinecap="round" opacity={nozzleOpacity} />
+                        <path d={nozzleBottom} fill="none" stroke="#5a684b" strokeWidth="4.5" strokeLinecap="round" opacity={nozzleOpacity} />
 
                         {/* Injector Plate */}
-                        <rect x={x_inj - 10} y={centerY - r_c - 6} width="10" height={r_c * 2 + 12} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" opacity={chamberOpacity} />
+                        <rect x={x_inj - 12} y={centerY - r_c - 8} width="12" height={r_c * 2 + 16} fill="#4a5d3c" rx="4" stroke="#8a9a7a" strokeWidth="2.5" opacity={chamberOpacity} />
 
-                        {/* Convergent Half Angle (θ_conv) Arc & Badge Overlay */}
+                        {/* Angles Overlays */}
                         <g opacity={chamberOpacity}>
-                            <line x1={x_cyl_end} y1={centerY - r_c} x2={x_cyl_end + 45} y2={centerY - r_c} stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3,3" />
+                            <line x1={x_cyl_end} y1={centerY - r_c} x2={x_cyl_end + 45} y2={centerY - r_c} stroke="#2d3628" strokeWidth="1.5" strokeDasharray="3,3" />
                             <g transform={`translate(${x_cyl_end + (x_throat - x_cyl_end)*0.4}, ${centerY - r_c - 16})`}>
-                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#0f172a" stroke="#fbbf24" strokeWidth="1" />
-                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-amber-300 font-mono font-bold">θc: {thetaConv}°</text>
+                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#f0ede6" stroke="#8a9a7a" strokeWidth="1" />
+                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-stone-700 font-mono font-bold">θc: {thetaConv}°</text>
                             </g>
                         </g>
 
-                        {/* Divergent Half Angle (θ_div) Arc & Badge Overlay */}
                         <g opacity={nozzleOpacity}>
-                            <line x1={x_throat} y1={centerY - r_t} x2={x_throat + 50} y2={centerY - r_t} stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="3,3" />
+                            <line x1={x_throat} y1={centerY - r_t} x2={x_throat + 50} y2={centerY - r_t} stroke="#2d3628" strokeWidth="1.5" strokeDasharray="3,3" />
                             <g transform={`translate(${x_throat + (x_exit - x_throat)*0.35}, ${centerY - r_t - 16})`}>
-                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#0f172a" stroke="#38bdf8" strokeWidth="1" />
-                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-sky-300 font-mono font-bold">θd: {thetaDiv}°</text>
+                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#f0ede6" stroke="#8a9a7a" strokeWidth="1" />
+                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-stone-700 font-mono font-bold">θd: {thetaDiv}°</text>
                             </g>
                         </g>
 
                         {/* Dimension Callouts */}
                         {(tab === 'chamber' || tab === 'combined') && (
                             <>
-                                <text x={x_inj + 10} y={centerY - 6} className="text-xs fill-amber-300 font-mono font-bold">Dc: {fmtLen(results.Dc)}</text>
-                                <text x={(x_inj + x_cyl_end)/2} y={centerY + r_c + 20} className="text-xs fill-slate-300 font-mono font-bold" textAnchor="middle">Lcyl: {fmtLen(results.L_cyl)}</text>
+                                <text x={x_inj + 12} y={centerY - 6} className="text-xs fill-white font-mono font-bold" style={{textShadow: '0 1px 3px rgba(0,0,0,0.8)'}}>Dc: {fmtLen(results.Dc)}</text>
+                                <text x={(x_inj + x_cyl_end)/2} y={centerY + r_c + 20} className="text-xs fill-stone-600 font-mono font-bold" textAnchor="middle">Lcyl: {fmtLen(results.L_cyl)}</text>
                             </>
                         )}
                         {(tab === 'nozzle' || tab === 'combined') && (
                             <>
-                                <text x={x_throat} y={centerY + r_t + 20} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {fmtLen(results.Dt)}</text>
-                                <text x={x_exit} y={centerY + r_e + 20} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {fmtLen(results.De)}</text>
+                                <text x={x_throat} y={centerY + r_t + 20} className="text-xs fill-stone-600 font-mono font-bold" textAnchor="middle">Dt: {fmtLen(results.Dt)}</text>
+                                <text x={x_exit} y={centerY + r_e + 20} className="text-xs fill-stone-600 font-mono font-bold" textAnchor="middle">De: {fmtLen(results.De)}</text>
                             </>
                         )}
                     </svg>
@@ -1130,40 +1294,38 @@
             };
 
             return (
-                <div className="flex flex-col gap-4 w-full p-2">
-                    {/* Top Navigation Bar */}
-                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-900/85 p-4 rounded-2xl border border-slate-700/80 shadow-xl">
-                        <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800 w-full md:w-auto">
+                <div className="flex flex-col gap-4 w-full mt-4">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-stone-50/60 p-4 rounded-2xl border border-stone-200 shadow-sm">
+                        <div className="flex bg-stone-200/60 p-1.5 rounded-xl border border-stone-300 w-full md:w-auto">
                             {[
                                 { id: 'chamber', label: 'Chamber Sizer' },
                                 { id: 'nozzle', label: 'Nozzle Maker' },
                                 { id: 'combined', label: 'Combined System' }
                             ].map(t => (
                                 <button key={t.id} onClick={() => setTab(t.id)}
-                                        className={`flex-1 md:flex-none py-2 px-4 text-xs font-bold rounded-lg transition ${tab === t.id ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+                                        className={`flex-1 md:flex-none py-2 px-4 text-xs font-bold rounded-lg transition ${tab === t.id ? 'bg-[#6b7a57] text-white shadow-md' : 'text-stone-600 hover:bg-stone-100'}`}>
                                     {t.label}
                                 </button>
                             ))}
                         </div>
                         
                         <div className="flex items-center gap-3">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Units:</span>
-                            <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                                <button onClick={() => setUnit('SI')} className={`px-3 py-1.5 text-[10px] font-bold rounded transition ${unit === 'SI' ? 'bg-slate-700 text-sky-300 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}>SI Metric</button>
-                                <button onClick={() => setUnit('Imperial')} className={`px-3 py-1.5 text-[10px] font-bold rounded transition ${unit === 'Imperial' ? 'bg-slate-700 text-amber-300 shadow-inner' : 'text-slate-500 hover:text-slate-300'}`}>Imperial</button>
+                            <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">Units:</span>
+                            <div className="flex bg-stone-200/60 p-1 rounded-lg border border-stone-300">
+                                <button onClick={() => setUnit('SI')} className={`px-3 py-1.5 text-[10px] font-bold rounded transition ${unit === 'SI' ? 'bg-[#4a5d3c] text-[#e6dec9] shadow-inner' : 'text-stone-500 hover:text-stone-800'}`}>SI Metric</button>
+                                <button onClick={() => setUnit('Imperial')} className={`px-3 py-1.5 text-[10px] font-bold rounded transition ${unit === 'Imperial' ? 'bg-[#4a5d3c] text-[#e6dec9] shadow-inner' : 'text-stone-500 hover:text-stone-800'}`}>Imperial</button>
                             </div>
                         </div>
                     </div>
 
                     <div className="flex flex-col lg:flex-row gap-6 w-full">
-                        {/* Control Sidebar */}
                         <div className="w-full lg:w-1/3 flex flex-col gap-5">
-                            <div className="bg-slate-900/85 p-5 rounded-2xl border border-slate-700/80 space-y-4 shadow-xl">
-                                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                            <div className="bg-stone-50/60 p-5 rounded-2xl border border-stone-200 space-y-4 shadow-sm">
+                                <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                     <span className="flex justify-between items-end">
                                         <span>Propellant Combination</span>
                                     </span>
-                                    <select className="bg-slate-950 border border-slate-800 rounded-xl p-2 mt-1 font-mono text-sm text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500" 
+                                    <select className="bg-white border border-stone-300 rounded-xl p-2 mt-1 font-mono text-sm text-[#4a5d3c] focus:outline-none focus:ring-2 focus:ring-[#6b7a57]" 
                                             value={propellant} onChange={e=>setPropellant(e.target.value)}>
                                         {Object.entries(propData).map(([key, data]) => (
                                             <option key={key} value={key}>{data.name}</option>
@@ -1171,39 +1333,37 @@
                                     </select>
                                 </label>
 
-                                {/* Custom O/F Ratio Slider */}
-                                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                     <span className="flex justify-between items-end">
                                         <span>Oxidizer-to-Fuel Ratio (O/F)</span>
-                                        <span className="font-mono text-sky-400">{customOF.toFixed(2)}</span>
+                                        <span className="font-mono text-[#4a5d3c]">{customOF.toFixed(2)}</span>
                                     </span>
                                     <input type="range" min="1.0" max="8.0" step="0.05" value={customOF} onChange={e=>setCustomOF(Number(e.target.value))} className="mt-1"/>
                                 </label>
 
-                                {/* Nozzle Angles */}
                                 {(tab === 'nozzle' || tab === 'combined') && (
                                     <>
-                                        <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                        <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                             Nozzle Contour Type
-                                            <select className="bg-slate-950 border border-slate-800 rounded-xl p-2 mt-1 font-mono text-sm text-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500" 
+                                            <select className="bg-white border border-stone-300 rounded-xl p-2 mt-1 font-mono text-sm text-[#4a5d3c] focus:outline-none focus:ring-2 focus:ring-[#6b7a57]" 
                                                     value={nozzleShape} onChange={e=>setNozzleShape(e.target.value)}>
                                                 <option value="bell">Bell (Rao Approximation)</option>
                                                 <option value="conical">Conical (15° Half-Angle)</option>
                                             </select>
                                         </label>
 
-                                        <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                        <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                             <span className="flex justify-between items-end">
                                                 <span>Convergent Half Angle (θconv)</span>
-                                                <span className="font-mono text-amber-400">{thetaConv}°</span>
+                                                <span className="font-mono text-[#4a5d3c]">{thetaConv}°</span>
                                             </span>
                                             <input type="range" min="15" max="45" step="1" value={thetaConv} onChange={e=>setThetaConv(Number(e.target.value))} className="mt-1"/>
                                         </label>
 
-                                        <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300">
+                                        <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                             <span className="flex justify-between items-end">
                                                 <span>Divergent Half Angle (θdiv)</span>
-                                                <span className="font-mono text-amber-400">{thetaDiv}°</span>
+                                                <span className="font-mono text-[#4a5d3c]">{thetaDiv}°</span>
                                             </span>
                                             <input type="range" min="8" max="30" step="1" value={thetaDiv} onChange={e=>setThetaDiv(Number(e.target.value))} className="mt-1"/>
                                         </label>
@@ -1223,10 +1383,10 @@
                                 />
 
                                 {(tab === 'chamber' || tab === 'combined') && (
-                                    <label className="flex flex-col gap-1 text-xs font-semibold text-slate-300 animate-fade-in">
+                                    <label className="flex flex-col gap-1 text-xs font-semibold text-stone-600">
                                         <span className="flex justify-between items-end">
                                             <span>Contraction Ratio (Ac / At)</span>
-                                            <span className="font-mono text-amber-400">{contractionRatio.toFixed(1)}</span>
+                                            <span className="font-mono text-[#4a5d3c]">{contractionRatio.toFixed(1)}</span>
                                         </span>
                                         <input type="range" min="1.5" max="8.0" step="0.1" value={contractionRatio} onChange={e=>setContractionRatio(Number(e.target.value))} className="mt-1"/>
                                     </label>
@@ -1242,63 +1402,62 @@
                                 )}
                             </div>
 
-                            <div className="bg-slate-900/90 text-white p-5 rounded-2xl border border-slate-700 shadow-xl flex-grow">
-                                <h4 className="font-bold text-amber-300 border-b border-slate-700/80 pb-2 mb-3 text-sm flex items-center justify-between">
+                            <div className="bg-[#424e37] text-white p-5 rounded-2xl border border-[#2d3628]/30 shadow-md flex-grow">
+                                <h4 className="font-bold text-[#e6dec9] border-b border-white/20 pb-2 mb-3 text-sm flex items-center justify-between">
                                     <span>Calculated Results</span>
-                                    <span className="text-[10px] text-slate-400 font-mono bg-slate-950 px-2 py-1 rounded">Ideal Gas Model</span>
+                                    <span className="text-[10px] text-[#c2b8a3] font-mono bg-[#2d3628]/40 px-2 py-1 rounded">Ideal Gas Model</span>
                                 </h4>
                                 
                                 {!results ? (
-                                    <p className="text-rose-400 text-xs text-center py-4">Pc must exceed ambient pressure to establish supersonic flow.</p>
+                                    <p className="text-[#f9c5c5] text-xs text-center py-4">Pc must exceed ambient pressure to establish supersonic flow.</p>
                                 ) : (
                                     <div className="grid grid-cols-2 gap-2">
-                                        <OutputBox label="Specific Impulse" value={`${results.Isp.toFixed(1)} s`} colorClass="text-amber-400" />
-                                        <OutputBox label="Total Mass Flow" value={fmtMass(results.mDot)} colorClass="text-sky-400" />
+                                        <OutputBox label="Specific Impulse" value={`${results.Isp.toFixed(1)} s`} colorClass="text-white" />
+                                        <OutputBox label="Total Mass Flow" value={fmtMass(results.mDot)} colorClass="text-white" />
                                         
-                                        <div className="col-span-2 flex justify-between px-1 mb-1 text-[10px] font-mono text-slate-400 border-b border-slate-800/50 pb-1.5">
-                                            <span>Oxidizer Flow: <span className="text-sky-300">{fmtMass(results.mDot_ox)}</span></span>
-                                            <span>Fuel Flow: <span className="text-rose-300">{fmtMass(results.mDot_f)}</span></span>
+                                        <div className="col-span-2 flex justify-between px-1 mb-1 text-[10px] font-mono text-[#c2b8a3] border-b border-white/20 pb-1.5">
+                                            <span>Oxidizer Flow: <span className="text-white">{fmtMass(results.mDot_ox)}</span></span>
+                                            <span>Fuel Flow: <span className="text-white">{fmtMass(results.mDot_f)}</span></span>
                                         </div>
                                         
                                         {(tab === 'chamber' || tab === 'combined') && (
                                             <>
-                                                <OutputBox label="Chamber Dia (Dc)" value={fmtLen(results.Dc)} colorClass="text-emerald-400" />
-                                                <OutputBox label="Chamber Length" value={fmtLen(results.L_cyl)} colorClass="text-emerald-400" />
+                                                <OutputBox label="Chamber Dia (Dc)" value={fmtLen(results.Dc)} colorClass="text-[#e6dec9]" />
+                                                <OutputBox label="Chamber Length" value={fmtLen(results.L_cyl)} colorClass="text-[#e6dec9]" />
                                             </>
                                         )}
 
                                         {(tab === 'nozzle' || tab === 'combined') && (
                                             <>
-                                                <OutputBox label="Throat Dia (Dt)" value={fmtLen(results.Dt)} colorClass="text-sky-300" />
-                                                <OutputBox label="Exit Dia (De)" value={fmtLen(results.De)} colorClass="text-purple-400" />
+                                                <OutputBox label="Throat Dia (Dt)" value={fmtLen(results.Dt)} colorClass="text-[#d0d6c4]" />
+                                                <OutputBox label="Exit Dia (De)" value={fmtLen(results.De)} colorClass="text-[#d0d6c4]" />
                                             </>
                                         )}
 
-                                        <div className="col-span-2 pt-2 mt-1 border-t border-slate-800 flex flex-wrap justify-between gap-y-1 text-[11px] text-slate-300">
-                                            <span>Exit Mach: <strong className="text-sky-300">M {results.Me.toFixed(2)}</strong></span>
-                                            <span>Exp Ratio: <strong className="text-amber-300">ε = {results.epsilon.toFixed(1)}</strong></span>
-                                            <span>Char Vel (c*): <strong className="text-emerald-300">{fmtVel(results.cStar)}</strong></span>
-                                            <span>Thrust Coeff (Cf): <strong className="text-purple-300">{results.Cf.toFixed(3)}</strong></span>
+                                        <div className="col-span-2 pt-2 mt-1 border-t border-white/10 flex flex-wrap justify-between gap-y-1 text-[11px] text-[#d8cfbc]">
+                                            <span>Exit Mach: <strong className="text-white">M {results.Me.toFixed(2)}</strong></span>
+                                            <span>Exp Ratio: <strong className="text-white">ε = {results.epsilon.toFixed(1)}</strong></span>
+                                            <span>Char Vel (c*): <strong className="text-white">{fmtVel(results.cStar)}</strong></span>
+                                            <span>Thrust Coeff (Cf): <strong className="text-white">{results.Cf.toFixed(3)}</strong></span>
                                         </div>
                                     </div>
                                 )}
                             </div>
                         </div>
 
-                        {/* High Precision Graphics Viewport */}
-                        <div className="w-full lg:w-2/3 min-h-[400px] bg-slate-950 rounded-2xl border-2 border-slate-800 flex flex-col items-center justify-between p-4 shadow-2xl relative overflow-hidden">
+                        <div className="w-full lg:w-2/3 min-h-[400px] bg-stone-100/50 rounded-2xl border border-stone-200 flex flex-col items-center justify-between p-4 shadow-sm relative overflow-hidden">
                             <div className="w-full flex justify-between items-center z-10">
-                                <div className="text-xs font-mono bg-slate-900/90 text-amber-300 px-3.5 py-1.5 rounded-full border border-slate-700 shadow-md">
+                                <div className="text-xs font-mono bg-white text-stone-600 px-3.5 py-1.5 rounded-full border border-stone-200 shadow-sm">
                                     {tab === 'chamber' ? 'Combustion Chamber Geometry' : tab === 'nozzle' ? 'De Laval Nozzle Geometry' : 'Complete Engine Schematic'} • {propData[propellant].name}
                                 </div>
                                 
                                 <button onClick={onLoadCFD} 
-                                        className="bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-slate-950 font-extrabold text-xs px-4 py-2 rounded-xl shadow-lg transition transform hover:scale-105 flex items-center gap-1.5">
-                                    <span>🚀 Simulate Engine Flow in CFD</span>
+                                        className="bg-[#6b7a57] hover:bg-[#4a5d3c] text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition transform hover:scale-[1.02] flex items-center gap-1.5">
+                                    <span>Simulate Engine Flow in CFD</span>
                                 </button>
                             </div>
 
-                            <div className="w-full flex-grow flex items-center justify-center">
+                            <div className="w-full flex-grow flex items-center justify-center py-4">
                                 {renderNozzleSVG()}
                             </div>
                         </div>
@@ -1306,18 +1465,6 @@
                 </div>
             );
         };
-
-        const SimulationCard = ({ title, description, children }) => (
-            <div className="glass-card p-6 md:p-8 flex flex-col mb-12 w-full">
-                <div className="max-w-4xl mb-6">
-                    <h3 className="text-2xl md:text-3xl font-extrabold text-white mb-2 tracking-tight">{title}</h3>
-                    <p className="text-slate-300 text-base leading-relaxed font-medium">{description}</p>
-                </div>
-                <div className="w-full">
-                    {children}
-                </div>
-            </div>
-        );
 
         const App = () => {
             const [customRocket, setCustomRocket] = React.useState({
@@ -1330,53 +1477,51 @@
                 shape: 'bell'
             });
 
-            const [selectedObstacle, setSelectedObstacle] = React.useState('designedRocket');
+            const [selectedObstacle, setSelectedObstacle] = React.useState('nozzle');
+            const [activeTab, setActiveTab] = React.useState('cfd');
 
             const handleLoadCFD = () => {
-                setSelectedObstacle('designedRocket');
-                const cfdElement = document.getElementById('cfd-viewport');
-                if (cfdElement) {
-                    cfdElement.scrollIntoView({ behavior: 'smooth' });
-                }
+                setSelectedObstacle('nozzle');
+                setActiveTab('cfd');
             };
 
             return (
                 <div className="py-12 px-4 sm:px-8 lg:px-16 w-full max-w-[1600px] mx-auto">
                     
                     {/* Header */}
-                    <header className="mb-16 text-center pt-6">
-                        <div className="inline-block px-5 py-2 glass-panel rounded-full text-sky-300 font-bold text-xs mb-4 uppercase tracking-widest border border-sky-500/30">
+                    <header className="mb-14 text-center pt-6">
+                        <div className="inline-block px-5 py-2 bg-stone-100 rounded-full text-stone-500 font-bold text-xs mb-4 uppercase tracking-widest border border-stone-200 shadow-sm">
                             Graduating Spring 2027
                         </div>
-                        <h1 className="text-5xl md:text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-indigo-300 to-purple-400 tracking-tight mb-3 drop-shadow-lg">
+                        <h1 className="text-5xl md:text-7xl font-extrabold text-[#2d3628] tracking-tight mb-3 drop-shadow-sm">
                             Cash Bilton
                         </h1>
-                        <p className="text-2xl text-slate-200 font-semibold mx-auto mt-1">
+                        <p className="text-2xl text-[#4a5d3c] font-semibold mx-auto mt-2">
                             Mechanical Engineering Portfolio
                         </p>
-                        <p className="text-lg text-sky-400 font-medium mx-auto mt-1">
+                        <p className="text-base text-stone-600 font-medium mx-auto mt-2">
                             Minors in Aerospace & AERE • Michigan Technological University
                         </p>
                     </header>
 
                     {/* Academic Focus & Experience Grid */}
                     <section className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16 max-w-5xl mx-auto">
-                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300 border border-slate-700">
-                            <h2 className="text-2xl font-bold text-sky-300 mb-4 flex items-center gap-2">
-                                <span className="text-3xl">🚀</span> Academic Focus
+                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300">
+                            <h2 className="text-2xl font-bold text-[#2d3628] mb-4">
+                                Academic Focus
                             </h2>
-                            <p className="text-slate-300 leading-relaxed font-medium text-base">
+                            <p className="text-stone-700 leading-relaxed font-medium text-base">
                                 Passionate about <strong>Fluid Dynamics, Computational Aerodynamics, and Rocket Propulsion systems.</strong> 
                                 Building interactive mathematical models and real-time CFD fluid solvers to simulate complex engineering physics.
                             </p>
                         </div>
 
-                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300 border border-slate-700">
-                            <h2 className="text-2xl font-bold text-indigo-300 mb-2 flex items-center gap-2">
-                                <span className="text-3xl">🧮</span> Math Learning Center Coach
+                        <div className="glass-panel p-8 rounded-3xl h-full transition hover:scale-[1.01] duration-300">
+                            <h2 className="text-2xl font-bold text-[#2d3628] mb-2">
+                                Math Learning Center Coach
                             </h2>
-                            <h3 className="text-sm text-sky-400 font-bold mb-3">MTU (Sophomore Year – Present)</h3>
-                            <ul className="text-slate-300 font-medium space-y-2 list-disc pl-5 text-sm">
+                            <h3 className="text-sm text-[#4a5d3c] font-bold mb-3">MTU (Sophomore Year – Present)</h3>
+                            <ul className="text-stone-700 font-medium space-y-2 list-disc pl-5 text-sm">
                                 <li>Tutor engineering peers in Calculus, Differential Equations, and Linear Algebra.</li>
                                 <li>Translate abstract mathematical theorems into concrete, solveable engineering paradigms.</li>
                                 <li>Cultivate collaborative problem-solving methodologies to improve cohort retention.</li>
@@ -1384,45 +1529,64 @@
                         </div>
                     </section>
 
-                    {/* Interactive Simulations */}
+                    {/* Interactive Simulations Tabbed Interface */}
                     <section className="w-full flex flex-col items-center">
-                        <div className="text-center max-w-3xl mb-12">
-                            <h2 className="text-4xl font-extrabold text-white mb-3">Interactive Fluids & Propulsion Physics</h2>
-                            <p className="text-lg text-slate-300 font-medium">
-                                Real-time high-DPI vector fluid solvers and propulsion design tools built in React.
+                        <div className="text-center max-w-3xl mb-8">
+                            <h2 className="text-3xl md:text-4xl font-extrabold text-[#2d3628] mb-3">Interactive Engineering Tools</h2>
+                            <p className="text-base text-stone-600 font-medium">
+                                Explore fluid mechanics and propulsion design using my custom-built React physics applications.
                             </p>
                         </div>
 
-                        {/* High-Resolution CFD Visualizer */}
-                        <SimulationCard
-                            title="High-Resolution Vector CFD Fluid Simulator"
-                            description="Solves 2D incompressible Navier-Stokes equations with anti-aliased Runge-Kutta particle streamlines, vorticity confinement, pressure projection, and optical Schlieren imaging around aerospace geometries or your custom rocket engine profile."
-                        >
-                            <CFDSimulator 
-                                customRocket={customRocket} 
-                                selectedObstacle={selectedObstacle} 
-                                setSelectedObstacle={setSelectedObstacle} 
-                            />
-                        </SimulationCard>
+                        <div className="w-full flex justify-center px-4 mb-0 relative z-10">
+                            <div className="flex bg-stone-200/50 p-1.5 rounded-t-2xl border-t border-x border-stone-200/80 shadow-[0_-4px_10px_rgba(0,0,0,0.02)] space-x-2">
+                                <button onClick={() => setActiveTab('cfd')} 
+                                        className={`px-6 md:px-10 py-3 md:py-4 rounded-xl font-bold text-sm md:text-base transition-all duration-300 ${activeTab === 'cfd' ? 'bg-[#fdfcfb] text-[#2d3628] shadow-sm' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-200'}`}>
+                                    GPU Fluid Solver (CFD)
+                                </button>
+                                <button onClick={() => setActiveTab('rocket')} 
+                                        className={`px-6 md:px-10 py-3 md:py-4 rounded-xl font-bold text-sm md:text-base transition-all duration-300 ${activeTab === 'rocket' ? 'bg-[#fdfcfb] text-[#2d3628] shadow-sm' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-200'}`}>
+                                    Propulsion Engine Sizer
+                                </button>
+                            </div>
+                        </div>
 
-                        {/* Rocket Engine Simulation */}
-                        <SimulationCard
-                            title="Propulsion: Liquid Rocket Combustion Chamber & Nozzle Sizer"
-                            description="Sizes combustion chambers and nozzles with customizable O/F ratio and nozzle half angles for Nitrous Oxide (N₂O), LOX, Ethanol, and Isopropyl Alcohol rocket engines."
-                        >
-                            <RocketEngineSizer 
-                                onUpdateCustomRocket={setCustomRocket} 
-                                onLoadCFD={handleLoadCFD} 
-                            />
-                        </SimulationCard>
+                        <div className="glass-card p-6 md:p-8 w-full rounded-t-none -mt-1 relative z-0">
+                            {activeTab === 'cfd' && (
+                                <div className="animate-fade-in">
+                                    <div className="max-w-4xl mb-6">
+                                        <h3 className="text-2xl font-bold text-[#2d3628] mb-2">High-Resolution GPU CFD</h3>
+                                        <p className="text-stone-600 text-sm font-medium">Solves 2D incompressible Navier-Stokes equations using a grid-based (Eulerian) approach. Implemented entirely in WebGL 2.0 Fragment Shaders, allowing the GPU to compute thousands of fluid cells in parallel for real-time performance.</p>
+                                    </div>
+                                    <WebGLCFDSimulator 
+                                        customRocket={customRocket} 
+                                        selectedObstacle={selectedObstacle} 
+                                        setSelectedObstacle={setSelectedObstacle} 
+                                    />
+                                </div>
+                            )}
+
+                            {activeTab === 'rocket' && (
+                                <div className="animate-fade-in">
+                                    <div className="max-w-4xl mb-6">
+                                        <h3 className="text-2xl font-bold text-[#2d3628] mb-2">Liquid Rocket Sizer</h3>
+                                        <p className="text-stone-600 text-sm font-medium">Sizes combustion chambers and nozzles with customizable O/F ratio and nozzle half angles for various bipropellant rocket engines.</p>
+                                    </div>
+                                    <RocketEngineSizer 
+                                        onUpdateCustomRocket={setCustomRocket} 
+                                        onLoadCFD={handleLoadCFD} 
+                                    />
+                                </div>
+                            )}
+                        </div>
                     </section>
 
                     {/* Footer */}
-                    <footer className="pt-16 pb-10 text-center text-slate-400 font-medium flex flex-col items-center justify-center space-y-2">
-                        <div className="w-24 h-1 bg-gradient-to-r from-sky-400 to-indigo-500 rounded-full mb-6"></div>
-                        <p className="text-lg font-bold text-white">Cash Bilton</p>
+                    <footer className="pt-16 pb-10 text-center text-stone-500 font-medium flex flex-col items-center justify-center space-y-2">
+                        <div className="w-24 h-1 bg-stone-300 rounded-full mb-6"></div>
+                        <p className="text-lg font-bold text-[#4a5d3c]">Cash Bilton</p>
                         <p>&copy; {new Date().getFullYear()} All rights reserved.</p>
-                        <p className="text-sm text-slate-500">Built with React & Tailwind CSS.</p>
+                        <p className="text-xs text-stone-400">Built with React, WebGL2 & Tailwind CSS.</p>
                     </footer>
                 </div>
             );

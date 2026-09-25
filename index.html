@@ -196,7 +196,7 @@
                     } else if (uVisMode == 1) { // Speed
                         vec2 v = texture2D(uVelocity, vUv).xy;
                         float speed = length(v);
-                        float normSpeed = clamp(speed / (uInflowSpeed * 3.0), 0.0, 1.0);
+                        float normSpeed = clamp(speed / uInflowSpeed, 0.0, 1.0);
                         
                         // Map speed to a colormap (Blue -> Cyan -> Green -> Yellow -> Red)
                         vec3 color = vec3(0.0);
@@ -206,16 +206,68 @@
                         else color = mix(vec3(1,1,0), vec3(1,0,0), (normSpeed-0.75)/0.25);
                         
                         gl_FragColor = vec4(color, 1.0);
-                    } else if (uVisMode == 2) { // Pressure (using texture as pressure map here temporarily if needed)
+                    } else if (uVisMode == 2) { // Pressure
                         float p = texture2D(uTexture, vUv).x;
+                        vec3 color = vec3(0.0);
                         if (p > 0.0) {
-                            gl_FragColor = vec4(p*5.0, 0.0, 0.0, 1.0);
+                            color = mix(vec3(0.0,0.0,0.0), vec3(1.0, 0.2, 0.2), clamp(p * 5.0, 0.0, 1.0));
                         } else {
-                            gl_FragColor = vec4(0.0, 0.0, -p*5.0, 1.0);
+                            color = mix(vec3(0.0,0.0,0.0), vec3(0.2, 0.5, 1.0), clamp(-p * 5.0, 0.0, 1.0));
                         }
+                        gl_FragColor = vec4(color, 1.0);
                     } else {
                         gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                     }
+                }
+            `;
+
+            const curlShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying highp vec2 vUv;
+                varying highp vec2 vL;
+                varying highp vec2 vR;
+                varying highp vec2 vT;
+                varying highp vec2 vB;
+                uniform sampler2D uVelocity;
+
+                void main () {
+                    float L = texture2D(uVelocity, vL).y;
+                    float R = texture2D(uVelocity, vR).y;
+                    float T = texture2D(uVelocity, vT).x;
+                    float B = texture2D(uVelocity, vB).x;
+                    float vorticity = R - L - T + B;
+                    gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 1.0);
+                }
+            `;
+
+            const vorticityShaderSource = `
+                precision highp float;
+                precision highp sampler2D;
+                varying highp vec2 vUv;
+                varying highp vec2 vL;
+                varying highp vec2 vR;
+                varying highp vec2 vT;
+                varying highp vec2 vB;
+                uniform sampler2D uVelocity;
+                uniform sampler2D uCurl;
+                uniform float curl;
+                uniform float dt;
+
+                void main () {
+                    float L = texture2D(uCurl, vL).x;
+                    float R = texture2D(uCurl, vR).x;
+                    float T = texture2D(uCurl, vT).x;
+                    float B = texture2D(uCurl, vB).x;
+                    float C = texture2D(uCurl, vUv).x;
+                    
+                    vec2 force = 0.5 * vec2(abs(T) - abs(B), abs(R) - abs(L));
+                    force /= length(force) + 0.0001;
+                    force *= curl * C;
+                    force.y *= -1.0;
+                    
+                    vec2 vel = texture2D(uVelocity, vUv).xy;
+                    gl_FragColor = vec4(vel + force * dt, 0.0, 1.0);
                 }
             `;
 
@@ -625,6 +677,9 @@
                 const gradSubtractProgram = new Program(gl, baseVertex, gradientSubtractShaderSource);
                 const generateObstacleProgram = new Program(gl, baseVertex, generateObstacleShaderSource);
                 const inflowProgram = new Program(gl, baseVertex, inflowShaderSource);
+                
+                const curlProgram = new Program(gl, baseVertex, curlShaderSource);
+                const vorticityProgram = new Program(gl, baseVertex, vorticityShaderSource);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, blitBuffer);
                 const aPosition = gl.getAttribLocation(displayProgram.program, 'aPosition');
@@ -635,7 +690,7 @@
                 let dyeRes = 1024;
                 let aspect = 1.0;
                 
-                let velocity, dye, divergence, pressure, obstacle;
+                let velocity, dye, divergence, pressure, obstacle, curl;
 
                 const initFBOs = () => {
                     const width = container.clientWidth;
@@ -655,8 +710,9 @@
                     divergence = createFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
                     pressure = createDoubleFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
                     obstacle = createFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
+                    curl = createFBO(gl, simW, simH, ext.formatR.internalFormat, ext.formatR.format, ext.halfFloatTexType, gl.NEAREST);
 
-                    simStateRef.current = { velocity, dye, divergence, pressure, obstacle, aspect };
+                    simStateRef.current = { velocity, dye, divergence, pressure, obstacle, curl, aspect };
                     
                     updateObstacleGeometry();
                 };
@@ -685,15 +741,20 @@
                 const splat = (x, y, dx, dy, color) => {
                     if(!velocity || !dye) return;
                     splatProgram.bind();
-                    gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.texture);
+                    
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.uniform1i(splatProgram.uniforms.uTarget, 0); // Correctly target texture unit 0
+                    
                     gl.uniform1f(splatProgram.uniforms.aspectRatio, aspect);
                     gl.uniform2f(splatProgram.uniforms.point, x, 1.0 - y);
-                    gl.uniform3f(splatProgram.uniforms.color, dx, -dy, 0.0);
+                    gl.uniform3f(splatProgram.uniforms.color, dx * 50.0, -dy * 50.0, 0.0); // Scale interaction force
                     gl.uniform1f(splatProgram.uniforms.radius, dyeRadius);
                     blitFunc(velocity.write.fbo);
                     velocity.swap();
 
-                    gl.uniform1i(splatProgram.uniforms.uTarget, dye.read.texture);
+                    gl.bindTexture(gl.TEXTURE_2D, dye.read.texture);
+                    gl.uniform1i(splatProgram.uniforms.uTarget, 0); // Correctly target texture unit 0
                     gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b);
                     blitFunc(dye.write.fbo);
                     dye.swap();
@@ -708,7 +769,7 @@
                      gl.activeTexture(gl.TEXTURE0);
                      gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
                      gl.uniform1i(inflowProgram.uniforms.uTarget, 0);
-                     gl.uniform1f(inflowProgram.uniforms.uSpeed, inflowSpeed);
+                     gl.uniform1f(inflowProgram.uniforms.uSpeed, inflowSpeed * 100.0); // Scale physics speed up to visible bounds
                      gl.uniform1i(inflowProgram.uniforms.uType, 0);
                      blitFunc(velocity.write.fbo);
                      velocity.swap();
@@ -732,7 +793,7 @@
 
                     const state = simStateRef.current;
                     if(!state) return;
-                    const { velocity, dye, divergence, pressure, obstacle } = state;
+                    const { velocity, dye, divergence, pressure, obstacle, curl } = state;
                     
                     const dt = 0.016;
 
@@ -770,6 +831,29 @@
                     gl.bindTexture(gl.TEXTURE_2D, dye.read.texture);
                     blitFunc(dye.write.fbo);
                     dye.swap();
+
+                    // Compute Curl (Vorticity)
+                    gl.viewport(0, 0, velocity.width, velocity.height);
+                    curlProgram.bind();
+                    gl.uniform2f(curlProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(curlProgram.uniforms.uVelocity, 0);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    blitFunc(curl.fbo);
+
+                    // Apply Vorticity Confinement
+                    vorticityProgram.bind();
+                    gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                    gl.uniform1i(vorticityProgram.uniforms.uVelocity, 0);
+                    gl.uniform1i(vorticityProgram.uniforms.uCurl, 1);
+                    gl.uniform1f(vorticityProgram.uniforms.curl, vorticityBoost);
+                    gl.uniform1f(vorticityProgram.uniforms.dt, dt);
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, curl.texture);
+                    blitFunc(velocity.write.fbo);
+                    velocity.swap();
 
                     // Handle interaction splat
                     const ptr = pointerRef.current;
@@ -842,7 +926,7 @@
                     else if(visMode === 'pressure') vModeInt = 2;
                     
                     gl.uniform1i(displayProgram.uniforms.uVisMode, vModeInt);
-                    gl.uniform1f(displayProgram.uniforms.uInflowSpeed, inflowSpeed);
+                    gl.uniform1f(displayProgram.uniforms.uInflowSpeed, inflowSpeed * 100.0);
 
                     gl.activeTexture(gl.TEXTURE0);
                     gl.bindTexture(gl.TEXTURE_2D, (vModeInt===2) ? pressure.read.texture : dye.read.texture);
@@ -971,6 +1055,14 @@
                                         <span className="font-mono text-[#4a5d3c]">{inflowSpeed.toFixed(1)}</span>
                                     </span>
                                     <input type="range" min="0.5" max="8.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
+                                </label>
+
+                                <label className="flex flex-col text-xs font-semibold text-stone-600">
+                                    <span className="flex justify-between">
+                                        <span>Vorticity (Turbulence)</span>
+                                        <span className="font-mono text-[#4a5d3c]">{vorticityBoost.toFixed(1)}</span>
+                                    </span>
+                                    <input type="range" min="0.0" max="15.0" step="0.5" value={vorticityBoost} onChange={e=>setVorticityBoost(Number(e.target.value))}/>
                                 </label>
 
                                 <label className="flex flex-col text-xs font-semibold text-stone-600">

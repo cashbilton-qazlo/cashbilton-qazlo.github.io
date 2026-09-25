@@ -129,10 +129,10 @@
             const [maxSpeed, setMaxSpeed] = React.useState(0);
             const [webglSupported, setWebglSupported] = React.useState(true);
 
-            const paramsRef = React.useRef({ inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused });
+            const paramsRef = React.useRef({ inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused, obstacleType, customRocket });
             React.useEffect(() => {
-                paramsRef.current = { inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused };
-            }, [inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused]);
+                paramsRef.current = { inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused, obstacleType, customRocket };
+            }, [inflowSpeed, vorticityBoost, solverIters, dyeRadius, visMode, dyeStyle, isPaused, obstacleType, customRocket]);
 
             const glRef = React.useRef(null);
             const extRef = React.useRef(null);
@@ -509,9 +509,19 @@
                 uniform float uAspect;
                 uniform int uType; 
                 
+                // Custom Rocket parameters
+                uniform float uDc;
+                uniform float uDt;
+                uniform float uDe;
+                uniform float uL_cyl;
+                uniform float uL_conv;
+                uniform float uL_div;
+                uniform int uShape;
+                
                 void main() {
                     float isObs = 0.0;
-                    vec2 p = vUv - vec2(0.4, 0.5);
+                    // Centered horizontally and vertically
+                    vec2 p = vUv - vec2(0.5, 0.5); 
                     p.x *= uAspect;
 
                     if (uType == 1) { // Cylinder
@@ -529,13 +539,67 @@
                             if (abs(ap.y) <= yt) isObs = 1.0;
                         }
                     }
-                    else if (uType == 4) { // De Laval CD Rocket Nozzle Duct (Accelerates flow at throat)
+                    else if (uType == 4) { // De Laval CD Rocket Nozzle Duct
                         vec2 np = vUv;
                         if (np.x > 0.15 && np.x < 0.85) {
                             float nx = (np.x - 0.15) / 0.70;
-                            // Venturi throat contraction at nx = 0.35
                             float wallY = (nx < 0.35) ? (0.12 + (0.35 - nx) * 0.32) : (0.12 + (nx - 0.35) * 0.42);
                             if (np.y < wallY || np.y > 1.0 - wallY) isObs = 1.0;
+                        } else if (np.x <= 0.15) {
+                            if (np.y < 0.12 || np.y > 0.88) isObs = 1.0;
+                        }
+                    }
+                    else if (uType == 5) { // Custom Sized Rocket
+                        float L_total = uL_cyl + uL_conv + uL_div;
+                        float scale = 0.7 / L_total; 
+                        
+                        float s_L_cyl = uL_cyl * scale;
+                        float s_L_conv = uL_conv * scale;
+                        float s_L_div = uL_div * scale;
+                        
+                        // Adjust for aspect ratio
+                        float y_scale = scale * uAspect;
+                        float s_Dc = uDc * y_scale;
+                        float s_Dt = uDt * y_scale;
+                        float s_De = uDe * y_scale;
+                        
+                        // Ensure it fits vertically within the screen
+                        float max_r = max(s_Dc, s_De) / 2.0;
+                        if (max_r > 0.48) {
+                            float rescale = 0.48 / max_r;
+                            s_L_cyl *= rescale;
+                            s_L_conv *= rescale;
+                            s_L_div *= rescale;
+                            s_Dc *= rescale;
+                            s_Dt *= rescale;
+                            s_De *= rescale;
+                        }
+
+                        float startX = 0.15;
+                        vec2 np = vUv;
+                        
+                        if (np.x <= startX) {
+                            float wallY = s_Dc / 2.0;
+                            if (abs(np.y - 0.5) > wallY) isObs = 1.0;
+                        } else if (np.x > startX && np.x < startX + s_L_cyl + s_L_conv + s_L_div) {
+                            float localX = np.x - startX;
+                            float wallY = 0.0;
+                            
+                            if (localX <= s_L_cyl) {
+                                wallY = s_Dc / 2.0;
+                            } else if (localX <= s_L_cyl + s_L_conv) {
+                                float t = (localX - s_L_cyl) / s_L_conv;
+                                wallY = mix(s_Dc / 2.0, s_Dt / 2.0, t);
+                            } else {
+                                float t = (localX - (s_L_cyl + s_L_conv)) / s_L_div;
+                                if (uShape == 1) {
+                                    float t_curve = t * (2.0 - t); // quadratic ease-out bell contour
+                                    wallY = mix(s_Dt / 2.0, s_De / 2.0, t_curve);
+                                } else {
+                                    wallY = mix(s_Dt / 2.0, s_De / 2.0, t);
+                                }
+                            }
+                            if (abs(np.y - 0.5) > wallY) isObs = 1.0;
                         }
                     }
                     
@@ -725,22 +789,49 @@
 
                     simStateRef.current = { velocity, dye, density, divergence, pressure, obstacle, curl, aspect };
                     
-                    updateObstacleGeometry();
+                    updateObstacleGeometry(paramsRef.current.obstacleType, paramsRef.current.customRocket);
                 };
 
-                const updateObstacleGeometry = () => {
+                const updateObstacleGeometry = (type, cR) => {
                     if(!obstacle) return;
                     generateObstacleProgram.bind();
                     gl.uniform1f(generateObstacleProgram.uniforms.uAspect, aspect);
                     
                     let typeInt = 0;
-                    if(obstacleType === 'cylinder') typeInt = 1;
-                    else if(obstacleType === 'flatPlate') typeInt = 2;
-                    else if(obstacleType === 'airfoil') typeInt = 3;
-                    else if(obstacleType === 'nozzle') typeInt = 4;
+                    if(type === 'cylinder') typeInt = 1;
+                    else if(type === 'flatPlate') typeInt = 2;
+                    else if(type === 'airfoil') typeInt = 3;
+                    else if(type === 'nozzle') typeInt = 4;
+                    else if(type === 'customRocket') typeInt = 5;
                     
                     gl.uniform1i(generateObstacleProgram.uniforms.uType, typeInt);
+                    
+                    if (type === 'customRocket' && cR) {
+                        gl.uniform1f(generateObstacleProgram.uniforms.uDc, cR.Dc || 0.12);
+                        gl.uniform1f(generateObstacleProgram.uniforms.uDt, cR.Dt || 0.05);
+                        gl.uniform1f(generateObstacleProgram.uniforms.uDe, cR.De || 0.11);
+                        gl.uniform1f(generateObstacleProgram.uniforms.uL_cyl, cR.L_cyl || 0.15);
+                        gl.uniform1f(generateObstacleProgram.uniforms.uL_conv, cR.L_conv || 0.06);
+                        gl.uniform1f(generateObstacleProgram.uniforms.uL_div, cR.L_div || 0.14);
+                        gl.uniform1i(generateObstacleProgram.uniforms.uShape, cR.shape === 'bell' ? 1 : 0);
+                    }
+
                     blitFunc(obstacle.fbo);
+                    
+                    // Clear fields to prevent trapped fluid artifacts inside new geometry walls
+                    if (simStateRef.current && simStateRef.current.velocity) {
+                        const currentFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, simStateRef.current.velocity.read.fbo);
+                        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, simStateRef.current.velocity.write.fbo);
+                        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+                        
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, simStateRef.current.dye.read.fbo);
+                        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, simStateRef.current.dye.write.fbo);
+                        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, currentFbo);
+                    }
                 };
                 
                 extRef.current.updateObstacle = updateObstacleGeometry;
@@ -974,7 +1065,7 @@
                     const now = performance.now();
                     if (now - lastTime >= 1000) {
                         setFps(frameCount);
-                        setMaxSpeed((p.inflowSpeed * (obstacleType === 'nozzle' ? 2.85 : 1.45)).toFixed(1));
+                        setMaxSpeed((p.inflowSpeed * ((p.obstacleType === 'nozzle' || p.obstacleType === 'customRocket') ? 3.85 : 1.45)).toFixed(1));
                         frameCount = 0;
                         lastTime = now;
                     }
@@ -997,9 +1088,9 @@
 
             React.useEffect(() => {
                 if(extRef.current && extRef.current.updateObstacle) {
-                    extRef.current.updateObstacle();
+                    extRef.current.updateObstacle(obstacleType, customRocket);
                 }
-            }, [obstacleType]);
+            }, [obstacleType, customRocket]);
 
             const handlePointerDown = (e) => {
                 const rect = canvasRef.current.getBoundingClientRect();
@@ -1091,6 +1182,7 @@
                                 <label className="text-xs font-bold uppercase tracking-wider text-stone-500 mb-1 block">Aerodynamic Geometry</label>
                                 <select className="w-full bg-white border border-stone-300 rounded-xl p-2.5 text-sm font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4a5d3c]"
                                         value={obstacleType} onChange={e=>setObstacleType(e.target.value)}>
+                                    <option value="customRocket">Custom Sized Rocket Engine</option>
                                     <option value="nozzle">De Laval CD Rocket Nozzle Duct (Venturi Acceleration)</option>
                                     <option value="airfoil">NACA Airfoil Profile</option>
                                     <option value="cylinder">Circular Cylinder (Vortex Shedding)</option>
@@ -1106,7 +1198,7 @@
                                         <span>Freestream Velocity (U∞)</span>
                                         <span className="font-mono text-[#4a5d3c]">{inflowSpeed.toFixed(1)} m/s</span>
                                     </span>
-                                    <input type="range" min="0.5" max="8.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
+                                    <input type="range" min="0.5" max="50.0" step="0.1" value={inflowSpeed} onChange={e=>setInflowSpeed(Number(e.target.value))}/>
                                 </label>
 
                                 <label className="flex flex-col text-xs font-semibold text-stone-600">
@@ -1143,9 +1235,9 @@
                             <span>WebGL2 Fluid Physics Grid</span>
                         </div>
 
-                        {obstacleType === 'nozzle' && (
+                        {(obstacleType === 'nozzle' || obstacleType === 'customRocket') && (
                             <div className="absolute top-4 right-5 text-xs font-mono bg-emerald-950/80 text-emerald-200 px-3 py-1.5 rounded-full border border-emerald-700 z-10 pointer-events-none shadow-sm flex items-center gap-1.5">
-                                <span>Throat Venturi Speed Boost:</span>
+                                <span>Peak Exhaust Velocity Est:</span>
                                 <strong className="text-white">{maxSpeed} m/s</strong>
                             </div>
                         )}
@@ -1391,7 +1483,7 @@
             const [activeTab, setActiveTab] = React.useState('cfd');
 
             const handleLoadCFD = () => {
-                setSelectedObstacle('nozzle');
+                setSelectedObstacle('customRocket');
                 setActiveTab('cfd');
             };
 

@@ -284,7 +284,7 @@
                     const i11 = IX(x0 + 1, y0 + 1);
 
                     const vx = (1 - fx) * ((1 - fy) * u[i00] + fy * u[i01]) + fx * ((1 - fy) * u[i10] + fy * u[i11]);
-                    const vy = (1 - fx) * ((1 - fy) * v[i00] + fy * v[i01]) + fx * ((1 - fy) * v[i0, j0]);
+                    const vy = (1 - fx) * ((1 - fy) * v[i00] + fy * v[i01]) + fx * ((1 - fy) * v[i10] + fy * v[i11]);
 
                     return [vx, vy];
                 };
@@ -398,6 +398,8 @@
 
                     const scaleX = displayW / GW;
                     const scaleY = displayH / GH;
+
+                    let rollingMaxSpd = 1.0, rollingMaxCurl = 1.0, rollingMaxP = 1.0;
 
                     if (visMode !== 'particles') {
                         let currMaxSpd = 0.001, currMaxCurl = 0.001, currMaxP = 0.001;
@@ -980,6 +982,8 @@
                         L_cyl: results.L_cyl,
                         L_conv: results.L_conv,
                         L_div: results.L_div,
+                        thetaConv: thetaConv,
+                        thetaDiv: thetaDiv,
                         shape: nozzleShape
                     });
                 }
@@ -1014,20 +1018,24 @@
                 if (!results) return null;
 
                 const width = 640;
-                const height = 320;
+                const height = 340;
                 const centerY = height / 2;
                 
-                const maxDim = Math.max(results.De, results.Dc, 0.25);
-                const scale = (height * 0.65) / maxDim;
+                const L_total = results.L_cyl + results.L_conv + results.L_div;
+                const maxRadius = Math.max(results.De / 2, results.Dc / 2, 0.1);
                 
-                const r_c = (results.Dc / 2) * scale;
-                const r_t = (results.Dt / 2) * scale;
-                const r_e = (results.De / 2) * scale;
+                const marginX = 60;
+                const printW = width - marginX * 2;
+                const scaleY = (height * 0.30) / maxRadius;
                 
-                const x_inj = 40;
-                const x_cyl_end = x_inj + Math.min(Math.max(results.L_cyl * scale * 2.5, 80), 160);
-                const x_throat = x_cyl_end + Math.min(Math.max(results.L_conv * scale * 2.5, 45), 90);
-                const x_exit = Math.min(x_throat + Math.min(Math.max(results.L_div * scale * 2.5, 80), 220), width - 40);
+                const x_inj = marginX;
+                const x_cyl_end = x_inj + (results.L_cyl / L_total) * printW;
+                const x_throat = x_cyl_end + (results.L_conv / L_total) * printW;
+                const x_exit = x_throat + (results.L_div / L_total) * printW;
+
+                const r_c = (results.Dc / 2) * scaleY;
+                const r_t = (results.Dt / 2) * scaleY;
+                const r_e = (results.De / 2) * scaleY;
 
                 const chamberTop = `M ${x_inj},${centerY - r_c} L ${x_cyl_end},${centerY - r_c} L ${x_throat},${centerY - r_t}`;
                 const chamberBottom = `M ${x_throat},${centerY + r_t} L ${x_cyl_end},${centerY + r_c} L ${x_inj},${centerY + r_c}`;
@@ -1036,8 +1044,8 @@
                 let nozzleBottom = "";
                 
                 if (nozzleShape === 'bell') {
-                    nozzleTop = `M ${x_throat},${centerY - r_t} C ${x_throat + 40},${centerY - r_t} ${x_exit - 60},${centerY - r_e} ${x_exit},${centerY - r_e}`;
-                    nozzleBottom = `M ${x_exit},${centerY + r_e} C ${x_exit - 60},${centerY + r_e} ${x_throat + 40},${centerY + r_t} ${x_throat},${centerY + r_t}`;
+                    nozzleTop = `M ${x_throat},${centerY - r_t} C ${x_throat + (x_exit - x_throat)*0.35},${centerY - r_t} ${x_exit - (x_exit - x_throat)*0.3},${centerY - r_e} ${x_exit},${centerY - r_e}`;
+                    nozzleBottom = `M ${x_exit},${centerY + r_e} C ${x_exit - (x_exit - x_throat)*0.3},${centerY + r_e} ${x_throat + (x_exit - x_throat)*0.35},${centerY + r_t} ${x_throat},${centerY + r_t}`;
                 } else {
                     nozzleTop = `M ${x_throat},${centerY - r_t} L ${x_exit},${centerY - r_e}`;
                     nozzleBottom = `M ${x_exit},${centerY + r_e} L ${x_throat},${centerY + r_t}`;
@@ -1050,7 +1058,7 @@
                 const nozzleOpacity = (tab === 'nozzle' || tab === 'combined') ? 1.0 : 0.15;
 
                 return (
-                    <svg className="w-full h-full drop-shadow-2xl transition-all duration-500" viewBox={`0 0 ${width} ${height}`}>
+                    <svg className="w-full h-full drop-shadow-2xl transition-all duration-300" viewBox={`0 0 ${width} ${height}`}>
                         <defs>
                             <linearGradient id="chamberFlame" x1="0%" y1="0%" x2="100%" y2="0%">
                                 <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
@@ -1069,30 +1077,52 @@
                         </defs>
 
                         {/* Fills */}
-                        <path d={chamberFill} fill="url(#chamberFlame)" opacity={chamberOpacity} className="transition-opacity duration-300" />
-                        <path d={nozzleFill} fill="url(#nozzleFlame)" opacity={nozzleOpacity} className="transition-opacity duration-300" />
-                        <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 80},${centerY} ${x_exit},${centerY + r_e} Z`} 
-                              fill="url(#plumeGrad)" opacity={nozzleOpacity} className="transition-opacity duration-300" />
+                        <path d={chamberFill} fill="url(#chamberFlame)" opacity={chamberOpacity} />
+                        <path d={nozzleFill} fill="url(#nozzleFlame)" opacity={nozzleOpacity} />
+                        <path d={`M ${x_exit},${centerY - r_e} Q ${x_exit + 70},${centerY} ${x_exit},${centerY + r_e} Z`} 
+                              fill="url(#plumeGrad)" opacity={nozzleOpacity} />
 
-                        {/* Strokes */}
-                        <path d={chamberTop} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" opacity={chamberOpacity} className="transition-opacity duration-300" />
-                        <path d={chamberBottom} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" opacity={chamberOpacity} className="transition-opacity duration-300" />
-                        
-                        <path d={nozzleTop} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" opacity={nozzleOpacity} className="transition-opacity duration-300" />
-                        <path d={nozzleBottom} fill="none" stroke="#f8fafc" strokeWidth="4" strokeLinecap="round" opacity={nozzleOpacity} className="transition-opacity duration-300" />
+                        {/* Axis of Symmetry */}
+                        <line x1={x_inj - 20} y1={centerY} x2={x_exit + 30} y2={centerY} stroke="#64748b" strokeWidth="1" strokeDasharray="6,4" opacity="0.6" />
 
-                        <rect x={x_inj - 12} y={centerY - r_c - 8} width="12" height={r_c * 2 + 16} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" opacity={chamberOpacity} />
-                        
+                        {/* Structural Outlines */}
+                        <path d={chamberTop} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={chamberOpacity} />
+                        <path d={chamberBottom} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={chamberOpacity} />
+                        <path d={nozzleTop} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={nozzleOpacity} />
+                        <path d={nozzleBottom} fill="none" stroke="#f8fafc" strokeWidth="3.5" strokeLinecap="round" opacity={nozzleOpacity} />
+
+                        {/* Injector Plate */}
+                        <rect x={x_inj - 10} y={centerY - r_c - 6} width="10" height={r_c * 2 + 12} fill="#334155" rx="3" stroke="#0f172a" strokeWidth="2" opacity={chamberOpacity} />
+
+                        {/* Convergent Half Angle (θ_conv) Arc & Badge Overlay */}
+                        <g opacity={chamberOpacity}>
+                            <line x1={x_cyl_end} y1={centerY - r_c} x2={x_cyl_end + 45} y2={centerY - r_c} stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3,3" />
+                            <g transform={`translate(${x_cyl_end + (x_throat - x_cyl_end)*0.4}, ${centerY - r_c - 16})`}>
+                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#0f172a" stroke="#fbbf24" strokeWidth="1" />
+                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-amber-300 font-mono font-bold">θc: {thetaConv}°</text>
+                            </g>
+                        </g>
+
+                        {/* Divergent Half Angle (θ_div) Arc & Badge Overlay */}
+                        <g opacity={nozzleOpacity}>
+                            <line x1={x_throat} y1={centerY - r_t} x2={x_throat + 50} y2={centerY - r_t} stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="3,3" />
+                            <g transform={`translate(${x_throat + (x_exit - x_throat)*0.35}, ${centerY - r_t - 16})`}>
+                                <rect x="-26" y="-12" width="52" height="18" rx="6" fill="#0f172a" stroke="#38bdf8" strokeWidth="1" />
+                                <text x="0" y="0" textAnchor="middle" className="text-[10px] fill-sky-300 font-mono font-bold">θd: {thetaDiv}°</text>
+                            </g>
+                        </g>
+
+                        {/* Dimension Callouts */}
                         {(tab === 'chamber' || tab === 'combined') && (
                             <>
-                                <text x={x_inj + 15} y={centerY - 8} className="text-xs fill-amber-300 font-mono font-bold">Dc: {fmtLen(results.Dc)}</text>
-                                <text x={x_cyl_end - 20} y={centerY + r_c + 20} className="text-xs fill-slate-300 font-mono font-bold">Lcyl: {fmtLen(results.L_cyl)}</text>
+                                <text x={x_inj + 10} y={centerY - 6} className="text-xs fill-amber-300 font-mono font-bold">Dc: {fmtLen(results.Dc)}</text>
+                                <text x={(x_inj + x_cyl_end)/2} y={centerY + r_c + 20} className="text-xs fill-slate-300 font-mono font-bold" textAnchor="middle">Lcyl: {fmtLen(results.L_cyl)}</text>
                             </>
                         )}
                         {(tab === 'nozzle' || tab === 'combined') && (
                             <>
-                                <text x={x_throat} y={centerY - r_t - 10} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {fmtLen(results.Dt)}</text>
-                                <text x={x_exit} y={centerY - r_e - 10} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {fmtLen(results.De)}</text>
+                                <text x={x_throat} y={centerY + r_t + 20} className="text-xs fill-sky-300 font-mono font-bold" textAnchor="middle">Dt: {fmtLen(results.Dt)}</text>
+                                <text x={x_exit} y={centerY + r_e + 20} className="text-xs fill-emerald-300 font-mono font-bold" textAnchor="middle">De: {fmtLen(results.De)}</text>
                             </>
                         )}
                     </svg>
